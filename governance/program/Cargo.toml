@@ -23,6 +23,9 @@ solana-program = ">=1.17.17,<=2"
 spl-token = { version = "4.0", path = "../../token/program", features = [
     "no-entrypoint",
 ] }
+spl-token-2022 = { version = "2.0", path = "../../token/program-2022", features = [
+    "no-entrypoint",
+] }
 spl-governance-tools = { version = "0.1.4", path = "../tools" }
 spl-governance-addin-api = { version = "0.1.4", path = "../addin-api" }
 thiserror = "1.0"

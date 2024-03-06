@@ -74,6 +74,42 @@ pub enum GovernanceInstruction {
         config_args: RealmConfigArgs,
     },
 
+    /// Creates Governance Realm account which aggregates governances for given
+    /// Community Mint and optional Council Mint
+    ///
+    /// 0. `[writable]` Governance Realm account.
+    ///     * PDA seeds:['governance',name]
+    /// 1. `[]` Realm authority
+    /// 2. `[]` Community Token Mint
+    /// 3. `[writable]` Community Token Holding account.
+    ///     * PDA seeds: ['governance',realm,community_mint]
+    ///     The account will be created with the Realm PDA as its owner
+    /// 4. `[signer]` Payer
+    /// 5. `[]` System
+    /// 6. `[]` SPL Token
+    /// 7. `[]` Sysvar Rent
+    /// 8. `[]` Council Token Mint - optional
+    /// 9. `[writable]` Council Token Holding account - optional unless council
+    ///    is used.
+    ///     * PDA seeds: ['governance',realm,council_mint]
+    ///     The account will be created with the Realm PDA as its owner
+    /// 10. `[writable]` RealmConfig account.
+    ///     * PDA seeds: ['realm-config', realm]
+    /// 11. `[]` Optional Community Voter Weight Addin Program Id
+    /// 12. `[]` Optional Max Community Voter Weight Addin Program Id
+    /// 13. `[]` Optional Council Voter Weight Addin Program Id
+    /// 14. `[]` Optional Max Council Voter Weight Addin Program Id
+    CreateRealm2022 {
+        #[allow(dead_code)]
+        /// UTF-8 encoded Governance Realm name
+        name: String,
+
+        #[allow(dead_code)]
+        /// Realm config args
+        config_args: RealmConfigArgs,
+    },
+
+
     /// Deposits governing tokens (Community or Council) to Governance Realm and
     /// establishes your voter weight to be used for voting within the Realm
     /// Note: If subsequent (top up) deposit is made and there are active votes
@@ -103,6 +139,37 @@ pub enum GovernanceInstruction {
         #[allow(dead_code)]
         amount: u64,
     },
+
+    /// Deposits governing tokens (Community or Council) to Governance Realm and
+    /// establishes your voter weight to be used for voting within the Realm
+    /// Note: If subsequent (top up) deposit is made and there are active votes
+    /// for the Voter then the vote weights won't be updated automatically
+    /// It can be done by relinquishing votes on active Proposals and voting
+    /// again with the new weight
+    ///
+    ///  0. `[]` Realm account
+    ///  1. `[writable]` Governing Token Holding account.
+    ///     * PDA seeds: ['governance',realm, governing_token_mint]
+    ///  2. `[writable]` Governing Token Source account. It can be either
+    ///     spl-token TokenAccount or MintAccount Tokens will be transferred or
+    ///     minted to the Holding account
+    ///  3. `[signer]` Governing Token Owner account
+    ///  4. `[signer]` Governing Token Source account authority It should be
+    ///     owner for TokenAccount and mint_authority for MintAccount
+    ///  5. `[writable]` TokenOwnerRecord account.
+    ///     * PDA seeds: ['governance',realm, governing_token_mint,
+    ///       governing_token_owner]
+    ///  6. `[signer]` Payer
+    ///  7. `[]` System
+    ///  8. `[]` SPL Token program
+    ///  9. `[]` RealmConfig account.
+    ///     * PDA seeds: ['realm-config', realm]
+    DepositGoverningTokens2022 {
+        /// The amount to deposit into the realm
+        #[allow(dead_code)]
+        amount: u64,
+    },
+    
 
     /// Withdraws governing tokens (Community or Council) from Governance Realm
     /// and downgrades your voter weight within the Realm.
@@ -735,6 +802,75 @@ pub fn create_realm(
     }
 }
 
+/// Creates CreateRealm2022 instruction
+#[allow(clippy::too_many_arguments)]
+pub fn create_realm_2022(
+    program_id: &Pubkey,
+    // Accounts
+    realm_authority: &Pubkey,
+    community_token_mint: &Pubkey,
+    payer: &Pubkey,
+    council_token_mint: Option<Pubkey>,
+    // Accounts Args
+    community_token_config_args: Option<GoverningTokenConfigAccountArgs>,
+    council_token_config_args: Option<GoverningTokenConfigAccountArgs>,
+    // Args
+    name: String,
+    min_community_weight_to_create_governance: u64,
+    community_mint_max_voter_weight_source: MintMaxVoterWeightSource,
+) -> Instruction {
+    let realm_address = get_realm_address(program_id, &name);
+    let community_token_holding_address =
+        get_governing_token_holding_address(program_id, &realm_address, community_token_mint);
+    let mut accounts = vec![
+        AccountMeta::new(realm_address, false),
+        AccountMeta::new_readonly(*realm_authority, false),
+        AccountMeta::new_readonly(*community_token_mint, false),
+        AccountMeta::new(community_token_holding_address, false),
+        AccountMeta::new(*payer, true),
+        AccountMeta::new_readonly(system_program::id(), false),
+        AccountMeta::new_readonly(spl_token_2022::id(), false),
+        AccountMeta::new_readonly(sysvar::rent::id(), false),
+    ];
+
+    let use_council_mint = if let Some(council_token_mint) = council_token_mint {
+        let council_token_holding_address =
+            get_governing_token_holding_address(program_id, &realm_address, &council_token_mint);
+
+        accounts.push(AccountMeta::new_readonly(council_token_mint, false));
+        accounts.push(AccountMeta::new(council_token_holding_address, false));
+        true
+    } else {
+        false
+    };
+
+    let realm_config_address = get_realm_config_address(program_id, &realm_address);
+    accounts.push(AccountMeta::new(realm_config_address, false));
+
+    let community_token_config_args =
+        with_governing_token_config_args(&mut accounts, community_token_config_args);
+
+    let council_token_config_args =
+        with_governing_token_config_args(&mut accounts, council_token_config_args);
+
+    let instruction = GovernanceInstruction::CreateRealm2022 {
+        config_args: RealmConfigArgs {
+            use_council_mint,
+            min_community_weight_to_create_governance,
+            community_mint_max_voter_weight_source,
+            community_token_config_args,
+            council_token_config_args,
+        },
+        name,
+    };
+
+    Instruction {
+        program_id: *program_id,
+        accounts,
+        data: instruction.try_to_vec().unwrap(),
+    }
+}
+
 /// Creates DepositGoverningTokens instruction
 #[allow(clippy::too_many_arguments)]
 pub fn deposit_governing_tokens(
@@ -775,6 +911,54 @@ pub fn deposit_governing_tokens(
     ];
 
     let instruction = GovernanceInstruction::DepositGoverningTokens { amount };
+
+    Instruction {
+        program_id: *program_id,
+        accounts,
+        data: instruction.try_to_vec().unwrap(),
+    }
+}
+
+/// Creates DepositGoverningTokens2022 instruction
+#[allow(clippy::too_many_arguments)]
+pub fn deposit_governing_tokens_2022(
+    program_id: &Pubkey,
+    // Accounts
+    realm: &Pubkey,
+    governing_token_source: &Pubkey,
+    governing_token_owner: &Pubkey,
+    governing_token_source_authority: &Pubkey,
+    payer: &Pubkey,
+    // Args
+    amount: u64,
+    governing_token_mint: &Pubkey,
+) -> Instruction {
+    let token_owner_record_address = get_token_owner_record_address(
+        program_id,
+        realm,
+        governing_token_mint,
+        governing_token_owner,
+    );
+
+    let governing_token_holding_address =
+        get_governing_token_holding_address(program_id, realm, governing_token_mint);
+
+    let realm_config_address = get_realm_config_address(program_id, realm);
+
+    let accounts = vec![
+        AccountMeta::new_readonly(*realm, false),
+        AccountMeta::new(governing_token_holding_address, false),
+        AccountMeta::new(*governing_token_source, false),
+        AccountMeta::new_readonly(*governing_token_owner, true),
+        AccountMeta::new_readonly(*governing_token_source_authority, true),
+        AccountMeta::new(token_owner_record_address, false),
+        AccountMeta::new(*payer, true),
+        AccountMeta::new_readonly(system_program::id(), false),
+        AccountMeta::new_readonly(spl_token_2022::id(), false),
+        AccountMeta::new_readonly(realm_config_address, false),
+    ];
+
+    let instruction = GovernanceInstruction::DepositGoverningTokens2022 { amount };
 
     Instruction {
         program_id: *program_id,
