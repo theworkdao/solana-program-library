@@ -25,6 +25,7 @@ mod process_relinquish_vote;
 mod process_remove_required_signatory;
 mod process_remove_transaction;
 mod process_revoke_governing_tokens;
+mod process_revoke_governing_tokens_2022;
 mod process_set_governance_config;
 mod process_set_governance_delegate;
 mod process_set_realm_authority;
@@ -32,6 +33,7 @@ mod process_set_realm_config;
 mod process_sign_off_proposal;
 mod process_update_program_metadata;
 mod process_withdraw_governing_tokens;
+mod process_withdraw_governing_tokens_2022;
 
 use {
     crate::{error::GovernanceError, instruction::GovernanceInstruction},
@@ -60,6 +62,7 @@ use {
     process_remove_required_signatory::*,
     process_remove_transaction::*,
     process_revoke_governing_tokens::*,
+    process_revoke_governing_tokens_2022::*,
     process_set_governance_config::*,
     process_set_governance_delegate::*,
     process_set_realm_authority::*,
@@ -67,6 +70,7 @@ use {
     process_sign_off_proposal::*,
     process_update_program_metadata::*,
     process_withdraw_governing_tokens::*,
+    process_withdraw_governing_tokens_2022::*,
     solana_program::{
         account_info::AccountInfo, borsh0_10::try_from_slice_unchecked, entrypoint::ProgramResult,
         msg, program_error::ProgramError, pubkey::Pubkey,
@@ -122,6 +126,10 @@ pub fn process_instruction(
 
         GovernanceInstruction::WithdrawGoverningTokens {} => {
             process_withdraw_governing_tokens(program_id, accounts)
+        }
+
+        GovernanceInstruction::WithdrawGoverningTokens2022 {} => {
+            process_withdraw_governing_tokens_2022(program_id, accounts)
         }
 
         GovernanceInstruction::SetGovernanceDelegate {
@@ -239,6 +247,10 @@ pub fn process_instruction(
 
         GovernanceInstruction::RevokeGoverningTokens { amount } => {
             process_revoke_governing_tokens(program_id, accounts, amount)
+        }
+
+        GovernanceInstruction::RevokeGoverningTokens2022 { amount } => {
+            process_revoke_governing_tokens_2022(program_id, accounts, amount)
         }
 
         GovernanceInstruction::RefundProposalDeposit {} => {

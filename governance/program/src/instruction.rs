@@ -192,6 +192,27 @@ pub enum GovernanceInstruction {
     ///     * PDA seeds: ['realm-config', realm]
     WithdrawGoverningTokens {},
 
+    /// Withdraws governing tokens 2022 (Community or Council) from Governance Realm
+    /// and downgrades your voter weight within the Realm.
+    /// Note: It's only possible to withdraw tokens if the Voter doesn't have
+    /// any outstanding active votes.
+    /// If there are any outstanding votes then they must be relinquished
+    /// before tokens could be withdrawn
+    ///
+    ///  0. `[]` Realm account
+    ///  1. `[writable]` Governing Token Holding account.
+    ///     * PDA seeds: ['governance',realm, governing_token_mint]
+    ///  2. `[writable]` Governing Token Destination account. All tokens will be
+    ///     transferred to this account
+    ///  3. `[signer]` Governing Token Owner account
+    ///  4. `[writable]` TokenOwnerRecord account.
+    ///     * PDA seeds: ['governance',realm, governing_token_mint,
+    ///       governing_token_owner]
+    ///  5. `[]` SPL Token program
+    ///  6. `[]` RealmConfig account.
+    ///     * PDA seeds: ['realm-config', realm]
+    WithdrawGoverningTokens2022 {},
+
     /// Sets Governance Delegate for the given Realm and Governing Token Mint
     /// (Community or Council). The Delegate would have voting rights and
     /// could vote on behalf of the Governing Token Owner. The Delegate would
@@ -685,6 +706,32 @@ pub enum GovernanceInstruction {
         amount: u64,
     },
 
+    /// Revokes (burns) membership governing tokens 2022 for the given
+    /// TokenOwnerRecord and hence takes away governance power from the
+    /// TokenOwner. Note: If there are active votes for the TokenOwner then
+    /// the vote weights won't be updated automatically
+    ///
+    ///  0. `[]` Realm account
+    ///  1. `[writable]` Governing Token Holding account.
+    ///     * PDA seeds: ['governance',realm, governing_token_mint]
+    ///  2. `[writable]` TokenOwnerRecord account.
+    ///     * PDA seeds: ['governance',realm, governing_token_mint,
+    ///       governing_token_owner]
+    ///  3. `[writable]` GoverningTokenMint
+    ///  4. `[signer]` Revoke authority which can be either of:
+    ///                1) GoverningTokenMint mint_authority to forcefully revoke
+    ///                   the membership tokens
+    ///                2) GoverningTokenOwner who voluntarily revokes their own
+    ///                   membership
+    ///  5. `[]` RealmConfig account.
+    ///     * PDA seeds: ['realm-config', realm]
+    ///  6. `[]` SPL Token program
+    RevokeGoverningTokens2022 {
+        /// The amount to revoke
+        #[allow(dead_code)]
+        amount: u64,
+    },
+
     /// Refunds ProposalDeposit once the given proposal is no longer active
     /// (Draft, SigningOff, Voting) Once the condition is met the
     /// instruction is permissionless and returns the deposit amount to the
@@ -1000,6 +1047,47 @@ pub fn withdraw_governing_tokens(
     ];
 
     let instruction = GovernanceInstruction::WithdrawGoverningTokens {};
+
+    Instruction {
+        program_id: *program_id,
+        accounts,
+        data: instruction.try_to_vec().unwrap(),
+    }
+}
+
+/// Creates WithdrawGoverningTokens instruction
+pub fn withdraw_governing_tokens_2022(
+    program_id: &Pubkey,
+    // Accounts
+    realm: &Pubkey,
+    governing_token_destination: &Pubkey,
+    governing_token_owner: &Pubkey,
+    // Args
+    governing_token_mint: &Pubkey,
+) -> Instruction {
+    let token_owner_record_address = get_token_owner_record_address(
+        program_id,
+        realm,
+        governing_token_mint,
+        governing_token_owner,
+    );
+
+    let governing_token_holding_address =
+        get_governing_token_holding_address(program_id, realm, governing_token_mint);
+
+    let realm_config_address = get_realm_config_address(program_id, realm);
+
+    let accounts = vec![
+        AccountMeta::new_readonly(*realm, false),
+        AccountMeta::new(governing_token_holding_address, false),
+        AccountMeta::new(*governing_token_destination, false),
+        AccountMeta::new_readonly(*governing_token_owner, true),
+        AccountMeta::new(token_owner_record_address, false),
+        AccountMeta::new_readonly(spl_token_2022::id(), false),
+        AccountMeta::new_readonly(realm_config_address, false),
+    ];
+
+    let instruction = GovernanceInstruction::WithdrawGoverningTokens2022 {};
 
     Instruction {
         program_id: *program_id,
@@ -1922,6 +2010,49 @@ pub fn revoke_governing_tokens(
     ];
 
     let instruction = GovernanceInstruction::RevokeGoverningTokens { amount };
+
+    Instruction {
+        program_id: *program_id,
+        accounts,
+        data: instruction.try_to_vec().unwrap(),
+    }
+}
+
+/// Creates RevokeGoverningTokens instruction
+#[allow(clippy::too_many_arguments)]
+pub fn revoke_governing_tokens_2022(
+    program_id: &Pubkey,
+    // Accounts
+    realm: &Pubkey,
+    governing_token_owner: &Pubkey,
+    governing_token_mint: &Pubkey,
+    revoke_authority: &Pubkey,
+    // Args
+    amount: u64,
+) -> Instruction {
+    let token_owner_record_address = get_token_owner_record_address(
+        program_id,
+        realm,
+        governing_token_mint,
+        governing_token_owner,
+    );
+
+    let governing_token_holding_address =
+        get_governing_token_holding_address(program_id, realm, governing_token_mint);
+
+    let realm_config_address = get_realm_config_address(program_id, realm);
+
+    let accounts = vec![
+        AccountMeta::new_readonly(*realm, false),
+        AccountMeta::new(governing_token_holding_address, false),
+        AccountMeta::new(token_owner_record_address, false),
+        AccountMeta::new(*governing_token_mint, false),
+        AccountMeta::new_readonly(*revoke_authority, true),
+        AccountMeta::new_readonly(realm_config_address, false),
+        AccountMeta::new_readonly(spl_token_2022::id(), false),
+    ];
+
+    let instruction = GovernanceInstruction::RevokeGoverningTokens2022 { amount };
 
     Instruction {
         program_id: *program_id,
