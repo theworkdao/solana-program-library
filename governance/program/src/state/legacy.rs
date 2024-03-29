@@ -115,19 +115,14 @@ pub struct GovernanceV1 {
     /// Governance Realm
     pub realm: Pubkey,
 
-    /// Account governed by this Governance and/or PDA identity seed
-    /// It can be Program account, Mint account, Token account or any other
-    /// account
+    /// The seed used to create Governance account PDA
     ///
-    /// Note: The account doesn't have to exist. In that case the field is only
-    /// a PDA seed
-    ///
-    /// Note: Setting governed_account doesn't give any authority over the
-    /// governed account The relevant authorities for specific account types
-    /// must still be transferred to the Governance PDA Ex: mint_authority/
-    /// freeze_authority for a Mint account or upgrade_authority for a
-    /// Program account should be transferred to the Governance PDA
-    pub governed_account: Pubkey,
+    /// Note: For the legacy asset specific Governance accounts
+    /// the seed by convention is:
+    /// MintGovernance -> mint address
+    /// TokenAccountGovernance -> token account address
+    /// ProgramGovernance -> program address
+    pub governance_seed: Pubkey,
 
     /// Running count of proposals
     pub proposals_count: u32,
@@ -212,7 +207,7 @@ pub struct ProposalV1 {
     /// The number of instructions included in the proposal
     pub instructions_count: u16,
 
-    /// The index of the the next instruction to be added
+    /// The index of the next instruction to be added
     pub instructions_next_index: u16,
 
     /// When the Proposal was created and entered Draft state
@@ -302,9 +297,8 @@ pub struct ProposalInstructionV1 {
     /// Unique instruction index within it's parent Proposal
     pub instruction_index: u16,
 
-    /// Minimum waiting time in seconds for the instruction to be executed once
-    /// proposal is voted on
-    pub hold_up_time: u32,
+    /// Previously hold_up_time in versions < V4
+    pub legacy: u32,
 
     /// Instruction to execute
     /// The instruction will be signed by Governance PDA the Proposal belongs to

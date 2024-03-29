@@ -19,7 +19,6 @@ async fn test_set_governance_config() {
     let mut governance_test = GovernanceProgramTest::start_new().await;
 
     let realm_cookie = governance_test.with_realm().await;
-    let governed_account_cookie = governance_test.with_governed_account().await;
 
     let token_owner_record_cookie = governance_test
         .with_community_token_deposit(&realm_cookie)
@@ -27,11 +26,7 @@ async fn test_set_governance_config() {
         .unwrap();
 
     let mut governance_cookie = governance_test
-        .with_governance(
-            &realm_cookie,
-            &governed_account_cookie,
-            &token_owner_record_cookie,
-        )
+        .with_governance(&realm_cookie, &token_owner_record_cookie)
         .await
         .unwrap();
 
@@ -75,7 +70,9 @@ async fn test_set_governance_config() {
 
     // Advance timestamp past hold_up_time
     governance_test
-        .advance_clock_by_min_timespan(proposal_transaction_cookie.account.hold_up_time as u64)
+        .advance_clock_by_min_timespan(
+            governance_cookie.account.config.transactions_hold_up_time as u64,
+        )
         .await;
 
     // Act
@@ -160,7 +157,6 @@ async fn test_set_governance_config_with_invalid_governance_authority_error() {
     let mut governance_test = GovernanceProgramTest::start_new().await;
 
     let realm_cookie = governance_test.with_realm().await;
-    let governed_account_cookie = governance_test.with_governed_account().await;
 
     let token_owner_record_cookie = governance_test
         .with_community_token_deposit(&realm_cookie)
@@ -168,11 +164,7 @@ async fn test_set_governance_config_with_invalid_governance_authority_error() {
         .unwrap();
 
     let mut governance_cookie = governance_test
-        .with_governance(
-            &realm_cookie,
-            &governed_account_cookie,
-            &token_owner_record_cookie,
-        )
+        .with_governance(&realm_cookie, &token_owner_record_cookie)
         .await
         .unwrap();
 
@@ -192,14 +184,9 @@ async fn test_set_governance_config_with_invalid_governance_authority_error() {
 
     // Try to maliciously use a different governance account to change the given
     // governance config
-    let governed_account_cookie2 = governance_test.with_governed_account().await;
 
     let governance_cookie2 = governance_test
-        .with_governance(
-            &realm_cookie,
-            &governed_account_cookie2,
-            &token_owner_record_cookie,
-        )
+        .with_governance(&realm_cookie, &token_owner_record_cookie)
         .await
         .unwrap();
 
@@ -218,7 +205,6 @@ async fn test_set_governance_config_with_invalid_governance_authority_error() {
             0,
             None,
             &mut set_governance_config_ix,
-            None,
         )
         .await
         .unwrap();
@@ -235,7 +221,9 @@ async fn test_set_governance_config_with_invalid_governance_authority_error() {
 
     // Advance timestamp past hold_up_time
     governance_test
-        .advance_clock_by_min_timespan(proposal_transaction_cookie.account.hold_up_time as u64)
+        .advance_clock_by_min_timespan(
+            governance_cookie.account.config.transactions_hold_up_time as u64,
+        )
         .await;
 
     // Act

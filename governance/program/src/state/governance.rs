@@ -10,7 +10,7 @@ use {
         },
         tools::structs::Reserved119,
     },
-    borsh::{maybestd::io::Write, BorshDeserialize, BorshSchema, BorshSerialize},
+    borsh::{io::Write, BorshDeserialize, BorshSchema, BorshSerialize},
     solana_program::{
         account_info::AccountInfo, program_error::ProgramError, program_pack::IsInitialized,
         pubkey::Pubkey, rent::Rent,
@@ -36,9 +36,9 @@ pub struct GovernanceConfig {
     /// able to create a proposal
     pub min_community_weight_to_create_proposal: u64,
 
-    /// Minimum waiting time in seconds for a transaction to be executed after
-    /// proposal is voted on
-    pub min_transaction_hold_up_time: u32,
+    /// The wait time in seconds before transactions can be executed after
+    /// proposal is successfully voted on
+    pub transactions_hold_up_time: u32,
 
     /// The base voting time in seconds for proposal to be open for voting
     /// Voting is unrestricted during the base voting time and any vote types
@@ -91,19 +91,14 @@ pub struct GovernanceV2 {
     /// Governance Realm
     pub realm: Pubkey,
 
-    /// Account governed by this Governance and/or PDA identity seed
-    /// It can be Program account, Mint account, Token account or any other
-    /// account
+    /// The seed used to create Governance account PDA
     ///
-    /// Note: The account doesn't have to exist. In that case the field is only
-    /// a PDA seed
-    ///
-    /// Note: Setting governed_account doesn't give any authority over the
-    /// governed account The relevant authorities for specific account types
-    /// must still be transferred to the Governance PDA Ex: mint_authority/
-    /// freeze_authority for a Mint account or upgrade_authority for a
-    /// Program account should be transferred to the Governance PDA
-    pub governed_account: Pubkey,
+    /// Note: For the legacy asset specific Governance accounts
+    /// the seed by convention is:
+    /// MintGovernance -> mint address
+    /// TokenAccountGovernance -> token account address
+    /// ProgramGovernance -> program address
+    pub governance_seed: Pubkey,
 
     /// Reserved space for future versions
     pub reserved1: u32,
@@ -221,17 +216,17 @@ impl GovernanceV2 {
     pub fn get_governance_address_seeds(&self) -> Result<[&[u8]; 3], ProgramError> {
         let seeds = match self.account_type {
             GovernanceAccountType::GovernanceV1 | GovernanceAccountType::GovernanceV2 => {
-                get_governance_address_seeds(&self.realm, &self.governed_account)
+                get_governance_address_seeds(&self.realm, &self.governance_seed)
             }
             GovernanceAccountType::ProgramGovernanceV1
             | GovernanceAccountType::ProgramGovernanceV2 => {
-                get_program_governance_address_seeds(&self.realm, &self.governed_account)
+                get_program_governance_address_seeds(&self.realm, &self.governance_seed)
             }
             GovernanceAccountType::MintGovernanceV1 | GovernanceAccountType::MintGovernanceV2 => {
-                get_mint_governance_address_seeds(&self.realm, &self.governed_account)
+                get_mint_governance_address_seeds(&self.realm, &self.governance_seed)
             }
             GovernanceAccountType::TokenGovernanceV1 | GovernanceAccountType::TokenGovernanceV2 => {
-                get_token_governance_address_seeds(&self.realm, &self.governed_account)
+                get_token_governance_address_seeds(&self.realm, &self.governance_seed)
             }
             GovernanceAccountType::Uninitialized
             | GovernanceAccountType::RealmV1
@@ -277,7 +272,7 @@ impl GovernanceV2 {
             let governance_data_v1 = GovernanceV1 {
                 account_type: self.account_type,
                 realm: self.realm,
-                governed_account: self.governed_account,
+                governance_seed: self.governance_seed,
                 proposals_count: 0,
                 config: self.config,
             };
@@ -385,12 +380,12 @@ impl GovernanceV2 {
     /// Returns the required deposit amount for creating Nth Proposal based on
     /// the number of active proposals where N equals to
     /// active_proposal_count - deposit_exempt_proposal_count The deposit is
-    /// not payed unless there are more active Proposal than the exempt amount
+    /// not paid unless there are more active Proposal than the exempt amount
     ///
-    /// Note: The exact deposit payed for Nth Proposal is
+    /// Note: The exact deposit paid for Nth Proposal is
     /// N*SECURITY_DEPOSIT_BASE_LAMPORTS + min_rent_for(ProposalDeposit)
     ///
-    /// Note: Although the deposit amount payed for Nth proposal is linear the
+    /// Note: Although the deposit amount paid for Nth proposal is linear the
     /// total deposit amount required to create N proposals is sum of arithmetic
     /// series Dn = N*r + d*N*(N+1)/2
     // where:
@@ -419,7 +414,7 @@ pub fn get_governance_data(
         GovernanceV2 {
             account_type,
             realm: governance_data_v1.realm,
-            governed_account: governance_data_v1.governed_account,
+            governance_seed: governance_data_v1.governance_seed,
             reserved1: 0,
             config: governance_data_v1.config,
             reserved_v2: Reserved119::default(),
@@ -505,7 +500,7 @@ pub fn assert_governance_for_realm(
     Ok(())
 }
 
-/// Returns ProgramGovernance PDA seeds
+/// Returns legacy ProgramGovernance PDA seeds
 pub fn get_program_governance_address_seeds<'a>(
     realm: &'a Pubkey,
     governed_program: &'a Pubkey,
@@ -520,7 +515,7 @@ pub fn get_program_governance_address_seeds<'a>(
     ]
 }
 
-/// Returns ProgramGovernance PDA address
+/// Returns legacy ProgramGovernance PDA address
 pub fn get_program_governance_address<'a>(
     program_id: &Pubkey,
     realm: &'a Pubkey,
@@ -533,7 +528,7 @@ pub fn get_program_governance_address<'a>(
     .0
 }
 
-/// Returns MintGovernance PDA seeds
+/// Returns legacy MintGovernance PDA seeds
 pub fn get_mint_governance_address_seeds<'a>(
     realm: &'a Pubkey,
     governed_mint: &'a Pubkey,
@@ -544,7 +539,7 @@ pub fn get_mint_governance_address_seeds<'a>(
     [b"mint-governance", realm.as_ref(), governed_mint.as_ref()]
 }
 
-/// Returns MintGovernance PDA address
+/// Returns legacy MintGovernance PDA address
 pub fn get_mint_governance_address<'a>(
     program_id: &Pubkey,
     realm: &'a Pubkey,
@@ -557,25 +552,29 @@ pub fn get_mint_governance_address<'a>(
     .0
 }
 
-/// Returns TokenGovernance PDA seeds
+/// Returns legacy TokenGovernance PDA seeds
 pub fn get_token_governance_address_seeds<'a>(
     realm: &'a Pubkey,
-    governed_token: &'a Pubkey,
+    governed_token_account: &'a Pubkey,
 ) -> [&'a [u8]; 3] {
     // 'token-governance' prefix ensures uniqueness of the PDA
     // Note: Only the current token account owner can create an account with this
     // PDA using CreateTokenGovernance instruction
-    [b"token-governance", realm.as_ref(), governed_token.as_ref()]
+    [
+        b"token-governance",
+        realm.as_ref(),
+        governed_token_account.as_ref(),
+    ]
 }
 
-/// Returns TokenGovernance PDA address
+/// Returns legacy TokenGovernance PDA address
 pub fn get_token_governance_address<'a>(
     program_id: &Pubkey,
     realm: &'a Pubkey,
-    governed_token: &'a Pubkey,
+    governed_token_account: &'a Pubkey,
 ) -> Pubkey {
     Pubkey::find_program_address(
-        &get_token_governance_address_seeds(realm, governed_token),
+        &get_token_governance_address_seeds(realm, governed_token_account),
         program_id,
     )
     .0
@@ -584,12 +583,12 @@ pub fn get_token_governance_address<'a>(
 /// Returns Governance PDA seeds
 pub fn get_governance_address_seeds<'a>(
     realm: &'a Pubkey,
-    governed_account: &'a Pubkey,
+    governance_seed: &'a Pubkey,
 ) -> [&'a [u8]; 3] {
     [
         b"account-governance",
         realm.as_ref(),
-        governed_account.as_ref(),
+        governance_seed.as_ref(),
     ]
 }
 
@@ -597,10 +596,10 @@ pub fn get_governance_address_seeds<'a>(
 pub fn get_governance_address<'a>(
     program_id: &Pubkey,
     realm: &'a Pubkey,
-    governed_account: &'a Pubkey,
+    governance_seed: &'a Pubkey,
 ) -> Pubkey {
     Pubkey::find_program_address(
-        &get_governance_address_seeds(realm, governed_account),
+        &get_governance_address_seeds(realm, governance_seed),
         program_id,
     )
     .0
@@ -680,7 +679,7 @@ mod test {
         GovernanceConfig {
             community_vote_threshold: VoteThreshold::YesVotePercentage(60),
             min_community_weight_to_create_proposal: 5,
-            min_transaction_hold_up_time: 10,
+            transactions_hold_up_time: 10,
             voting_base_time: 5,
             community_vote_tipping: VoteTipping::Strict,
             council_vote_threshold: VoteThreshold::YesVotePercentage(60),
@@ -697,7 +696,7 @@ mod test {
         GovernanceV2 {
             account_type: GovernanceAccountType::GovernanceV2,
             realm: Pubkey::new_unique(),
-            governed_account: Pubkey::new_unique(),
+            governance_seed: Pubkey::new_unique(),
             reserved1: 0,
             config: create_test_governance_config(),
             reserved_v2: Reserved119::default(),
@@ -710,7 +709,7 @@ mod test {
         GovernanceV1 {
             account_type: GovernanceAccountType::GovernanceV1,
             realm: Pubkey::new_unique(),
-            governed_account: Pubkey::new_unique(),
+            governance_seed: Pubkey::new_unique(),
             proposals_count: 10,
             config: create_test_governance_config(),
         }
@@ -722,7 +721,7 @@ mod test {
         let governance_data = create_test_governance();
 
         // Act
-        let size = governance_data.try_to_vec().unwrap().len();
+        let size = borsh::to_vec(&governance_data).unwrap().len();
 
         // Assert
         assert_eq!(governance_data.get_max_size(), Some(size));
@@ -734,7 +733,7 @@ mod test {
         let governance = create_test_v1_governance();
 
         // Act
-        let size = governance.try_to_vec().unwrap().len();
+        let size = borsh::to_vec(&governance).unwrap().len();
 
         // Assert
         assert_eq!(108, size);

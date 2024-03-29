@@ -5,7 +5,7 @@ use {
     borsh::{BorshDeserialize, BorshSerialize},
     cookies::{TokenAccountCookie, WalletCookie},
     solana_program::{
-        borsh0_10::try_from_slice_unchecked, clock::Clock, instruction::Instruction,
+        borsh1::try_from_slice_unchecked, clock::Clock, instruction::Instruction,
         program_error::ProgramError, program_pack::Pack, pubkey::Pubkey, rent::Rent,
         stake_history::Epoch, system_instruction, system_program, sysvar,
     },
@@ -366,6 +366,15 @@ impl ProgramTestBench {
             false,
             Epoch::default(),
         );
+
+        self.context.set_account(address, &data);
+    }
+
+    /// Removes an account by setting its data to empty and owner to system
+    /// subverting normal runtime checks
+    pub fn remove_account(&mut self, address: &Pubkey) {
+        let data =
+            AccountSharedData::create(0, vec![], system_program::id(), false, Epoch::default());
 
         self.context.set_account(address, &data);
     }

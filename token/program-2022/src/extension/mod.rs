@@ -24,7 +24,8 @@ use {
             transfer_fee::{TransferFeeAmount, TransferFeeConfig},
             transfer_hook::{TransferHook, TransferHookAccount},
         },
-        state::{Account, Mint, Multisig},
+        pod::{PodAccount, PodMint},
+        state::{Account, Mint, Multisig, PackedSizeOf},
     },
     bytemuck::{Pod, Zeroable},
     num_enum::{IntoPrimitive, TryFromPrimitive},
@@ -298,7 +299,7 @@ fn type_and_tlv_indices<S: BaseState>(
     if rest_input.is_empty() {
         Ok(None)
     } else {
-        let account_type_index = BASE_ACCOUNT_LENGTH.saturating_sub(S::LEN);
+        let account_type_index = BASE_ACCOUNT_LENGTH.saturating_sub(S::SIZE_OF);
         // check padding is all zeroes
         let tlv_start_index = account_type_index.saturating_add(size_of::<AccountType>());
         if rest_input.len() <= tlv_start_index {
@@ -427,7 +428,7 @@ pub trait BaseStateWithExtensions<S: BaseState> {
     fn try_get_account_len(&self) -> Result<usize, ProgramError> {
         let tlv_info = get_tlv_data_info(self.get_tlv_data())?;
         if tlv_info.extension_types.is_empty() {
-            Ok(S::LEN)
+            Ok(S::SIZE_OF)
         } else {
             let total_len = tlv_info
                 .used_len
@@ -468,13 +469,13 @@ pub struct StateWithExtensionsOwned<S: BaseState> {
     /// Raw TLV data, deserialized on demand
     tlv_data: Vec<u8>,
 }
-impl<S: BaseState> StateWithExtensionsOwned<S> {
+impl<S: BaseState + Pack> StateWithExtensionsOwned<S> {
     /// Unpack base state, leaving the extension data as a slice
     ///
     /// Fails if the base state is not initialized.
     pub fn unpack(mut input: Vec<u8>) -> Result<Self, ProgramError> {
-        check_min_len_and_not_multisig(&input, S::LEN)?;
-        let mut rest = input.split_off(S::LEN);
+        check_min_len_and_not_multisig(&input, S::SIZE_OF)?;
+        let mut rest = input.split_off(S::SIZE_OF);
         let base = S::unpack(&input)?;
         if let Some((account_type_index, tlv_start_index)) = type_and_tlv_indices::<S>(&rest)? {
             // type_and_tlv_indices() checks that returned indexes are within range
@@ -501,142 +502,83 @@ impl<S: BaseState> BaseStateWithExtensions<S> for StateWithExtensionsOwned<S> {
 /// Encapsulates immutable base state data (mint or account) with possible
 /// extensions
 #[derive(Debug, PartialEq)]
-pub struct StateWithExtensions<'data, S: BaseState> {
+pub struct StateWithExtensions<'data, S: BaseState + Pack> {
     /// Unpacked base data
     pub base: S,
     /// Slice of data containing all TLV data, deserialized on demand
     tlv_data: &'data [u8],
 }
-impl<'data, S: BaseState> StateWithExtensions<'data, S> {
+impl<'data, S: BaseState + Pack> StateWithExtensions<'data, S> {
     /// Unpack base state, leaving the extension data as a slice
     ///
     /// Fails if the base state is not initialized.
     pub fn unpack(input: &'data [u8]) -> Result<Self, ProgramError> {
-        check_min_len_and_not_multisig(input, S::LEN)?;
-        let (base_data, rest) = input.split_at(S::LEN);
+        check_min_len_and_not_multisig(input, S::SIZE_OF)?;
+        let (base_data, rest) = input.split_at(S::SIZE_OF);
         let base = S::unpack(base_data)?;
-        if let Some((account_type_index, tlv_start_index)) = type_and_tlv_indices::<S>(rest)? {
-            // type_and_tlv_indices() checks that returned indexes are within range
-            let account_type = AccountType::try_from(rest[account_type_index])
-                .map_err(|_| ProgramError::InvalidAccountData)?;
-            check_account_type::<S>(account_type)?;
-            Ok(Self {
-                base,
-                tlv_data: &rest[tlv_start_index..],
-            })
-        } else {
-            Ok(Self {
-                base,
-                tlv_data: &[],
-            })
-        }
+        let tlv_data = unpack_tlv_data::<S>(rest)?;
+        Ok(Self { base, tlv_data })
     }
 }
-impl<'a, S: BaseState> BaseStateWithExtensions<S> for StateWithExtensions<'a, S> {
+impl<'a, S: BaseState + Pack> BaseStateWithExtensions<S> for StateWithExtensions<'a, S> {
     fn get_tlv_data(&self) -> &[u8] {
         self.tlv_data
     }
 }
 
-/// Encapsulates mutable base state data (mint or account) with possible
-/// extensions
+/// Encapsulates immutable base state data (mint or account) with possible
+/// extensions, where the base state is Pod for zero-copy serde.
 #[derive(Debug, PartialEq)]
-pub struct StateWithExtensionsMut<'data, S: BaseState> {
+pub struct PodStateWithExtensions<'data, S: BaseState + Pod> {
     /// Unpacked base data
-    pub base: S,
-    /// Raw base data
-    base_data: &'data mut [u8],
-    /// Writable account type
-    account_type: &'data mut [u8],
+    pub base: &'data S,
     /// Slice of data containing all TLV data, deserialized on demand
-    tlv_data: &'data mut [u8],
+    tlv_data: &'data [u8],
 }
-impl<'data, S: BaseState> StateWithExtensionsMut<'data, S> {
-    /// Unpack base state, leaving the extension data as a mutable slice
+impl<'data, S: BaseState + Pod> PodStateWithExtensions<'data, S> {
+    /// Unpack base state, leaving the extension data as a slice
     ///
     /// Fails if the base state is not initialized.
-    pub fn unpack(input: &'data mut [u8]) -> Result<Self, ProgramError> {
-        check_min_len_and_not_multisig(input, S::LEN)?;
-        let (base_data, rest) = input.split_at_mut(S::LEN);
-        let base = S::unpack(base_data)?;
-        if let Some((account_type_index, tlv_start_index)) = type_and_tlv_indices::<S>(rest)? {
-            // type_and_tlv_indices() checks that returned indexes are within range
-            let account_type = AccountType::try_from(rest[account_type_index])
-                .map_err(|_| ProgramError::InvalidAccountData)?;
-            check_account_type::<S>(account_type)?;
-            let (account_type, tlv_data) = rest.split_at_mut(tlv_start_index);
-            Ok(Self {
-                base,
-                base_data,
-                account_type: &mut account_type[account_type_index..tlv_start_index],
-                tlv_data,
-            })
+    pub fn unpack(input: &'data [u8]) -> Result<Self, ProgramError> {
+        check_min_len_and_not_multisig(input, S::SIZE_OF)?;
+        let (base_data, rest) = input.split_at(S::SIZE_OF);
+        let base = pod_from_bytes::<S>(base_data)?;
+        if !base.is_initialized() {
+            Err(ProgramError::UninitializedAccount)
         } else {
-            Ok(Self {
-                base,
-                base_data,
-                account_type: &mut [],
-                tlv_data: &mut [],
-            })
+            let tlv_data = unpack_tlv_data::<S>(rest)?;
+            Ok(Self { base, tlv_data })
         }
     }
+}
+impl<'a, S: BaseState + Pod> BaseStateWithExtensions<S> for PodStateWithExtensions<'a, S> {
+    fn get_tlv_data(&self) -> &[u8] {
+        self.tlv_data
+    }
+}
 
-    /// Unpack an uninitialized base state, leaving the extension data as a
-    /// mutable slice
-    ///
-    /// Fails if the base state has already been initialized.
-    pub fn unpack_uninitialized(input: &'data mut [u8]) -> Result<Self, ProgramError> {
-        check_min_len_and_not_multisig(input, S::LEN)?;
-        let (base_data, rest) = input.split_at_mut(S::LEN);
-        let base = S::unpack_unchecked(base_data)?;
-        if base.is_initialized() {
-            return Err(TokenError::AlreadyInUse.into());
-        }
-        if let Some((account_type_index, tlv_start_index)) = type_and_tlv_indices::<S>(rest)? {
-            // type_and_tlv_indices() checks that returned indexes are within range
-            let account_type = AccountType::try_from(rest[account_type_index])
-                .map_err(|_| ProgramError::InvalidAccountData)?;
-            if account_type != AccountType::Uninitialized {
-                return Err(ProgramError::InvalidAccountData);
-            }
-            let (account_type, tlv_data) = rest.split_at_mut(tlv_start_index);
-            let state = Self {
-                base,
-                base_data,
-                account_type: &mut account_type[account_type_index..tlv_start_index],
-                tlv_data,
-            };
-            if let Some(extension_type) = state.get_first_extension_type()? {
-                let account_type = extension_type.get_account_type();
-                if account_type != S::ACCOUNT_TYPE {
-                    return Err(TokenError::ExtensionBaseMismatch.into());
-                }
-            }
-            Ok(state)
-        } else {
-            Ok(Self {
-                base,
-                base_data,
-                account_type: &mut [],
-                tlv_data: &mut [],
-            })
-        }
-    }
+/// Trait for mutable base state with extension
+pub trait BaseStateWithExtensionsMut<S: BaseState>: BaseStateWithExtensions<S> {
+    /// Get the underlying TLV data as mutable
+    fn get_tlv_data_mut(&mut self) -> &mut [u8];
+
+    /// Get the underlying account type as mutable
+    fn get_account_type_mut(&mut self) -> &mut [u8];
 
     /// Unpack a portion of the TLV data as the base mutable bytes
-    pub fn get_extension_bytes_mut<V: Extension>(&mut self) -> Result<&mut [u8], ProgramError> {
-        get_extension_bytes_mut::<S, V>(self.tlv_data)
+    fn get_extension_bytes_mut<V: Extension>(&mut self) -> Result<&mut [u8], ProgramError> {
+        get_extension_bytes_mut::<S, V>(self.get_tlv_data_mut())
     }
 
     /// Unpack a portion of the TLV data as the desired type that allows
     /// modifying the type
-    pub fn get_extension_mut<V: Extension + Pod>(&mut self) -> Result<&mut V, ProgramError> {
+    fn get_extension_mut<V: Extension + Pod>(&mut self) -> Result<&mut V, ProgramError> {
         pod_from_bytes_mut::<V>(self.get_extension_bytes_mut::<V>()?)
     }
 
     /// Packs a variable-length extension into its appropriate data segment.
     /// Fails if space hasn't already been allocated for the given extension
-    pub fn pack_variable_len_extension<V: Extension + VariableLenPack>(
+    fn pack_variable_len_extension<V: Extension + VariableLenPack>(
         &mut self,
         extension: &V,
     ) -> Result<(), ProgramError> {
@@ -646,17 +588,12 @@ impl<'data, S: BaseState> StateWithExtensionsMut<'data, S> {
         extension.pack_into_slice(data)
     }
 
-    /// Packs base state data into the base data portion
-    pub fn pack_base(&mut self) {
-        S::pack_into_slice(&self.base, self.base_data);
-    }
-
     /// Packs the default extension data into an open slot if not already found
     /// in the data buffer. If extension is already found in the buffer, it
     /// overwrites the existing extension with the default state if
     /// `overwrite` is set. If extension found, but `overwrite` is not set,
     /// it returns error.
-    pub fn init_extension<V: Extension + Pod + Default>(
+    fn init_extension<V: Extension + Pod + Default>(
         &mut self,
         overwrite: bool,
     ) -> Result<&mut V, ProgramError> {
@@ -672,7 +609,7 @@ impl<'data, S: BaseState> StateWithExtensionsMut<'data, S> {
     ///
     /// Returns an error if the extension is not present, or if there is not
     /// enough space in the buffer.
-    pub fn realloc_variable_len_extension<V: Extension + VariableLenPack>(
+    fn realloc_variable_len_extension<V: Extension + VariableLenPack>(
         &mut self,
         new_extension: &V,
     ) -> Result<(), ProgramError> {
@@ -693,16 +630,16 @@ impl<'data, S: BaseState> StateWithExtensionsMut<'data, S> {
         &mut self,
         length: usize,
     ) -> Result<&mut [u8], ProgramError> {
+        let tlv_data = self.get_tlv_data_mut();
         let TlvIndices {
             type_start: _,
             length_start,
             value_start,
-        } = get_extension_indices::<V>(self.tlv_data, false)?;
-        let tlv_len = get_tlv_data_info(self.tlv_data).map(|x| x.used_len)?;
-        let data_len = self.tlv_data.len();
+        } = get_extension_indices::<V>(tlv_data, false)?;
+        let tlv_len = get_tlv_data_info(tlv_data).map(|x| x.used_len)?;
+        let data_len = tlv_data.len();
 
-        let length_ref =
-            pod_from_bytes_mut::<Length>(&mut self.tlv_data[length_start..value_start])?;
+        let length_ref = pod_from_bytes_mut::<Length>(&mut tlv_data[length_start..value_start])?;
         let old_length = usize::from(*length_ref);
 
         // Length check to avoid a panic later in `copy_within`
@@ -719,22 +656,21 @@ impl<'data, S: BaseState> StateWithExtensionsMut<'data, S> {
 
         let old_value_end = value_start.saturating_add(old_length);
         let new_value_end = value_start.saturating_add(length);
-        self.tlv_data
-            .copy_within(old_value_end..tlv_len, new_value_end);
+        tlv_data.copy_within(old_value_end..tlv_len, new_value_end);
         match old_length.cmp(&length) {
             Ordering::Greater => {
                 // realloc to smaller, zero out the end
                 let new_tlv_len = tlv_len.saturating_sub(old_length.saturating_sub(length));
-                self.tlv_data[new_tlv_len..tlv_len].fill(0);
+                tlv_data[new_tlv_len..tlv_len].fill(0);
             }
             Ordering::Less => {
                 // realloc to bigger, zero out the new bytes
-                self.tlv_data[old_value_end..new_value_end].fill(0);
+                tlv_data[old_value_end..new_value_end].fill(0);
             }
             Ordering::Equal => {} // nothing needed!
         }
 
-        Ok(&mut self.tlv_data[value_start..new_value_end])
+        Ok(&mut tlv_data[value_start..new_value_end])
     }
 
     /// Allocate the given number of bytes for the given variable-length
@@ -742,7 +678,7 @@ impl<'data, S: BaseState> StateWithExtensionsMut<'data, S> {
     ///
     /// This can only be used for variable-sized types, such as `String` or
     /// `Vec`. `Pod` types must use `init_extension`
-    pub fn init_variable_len_extension<V: Extension + VariableLenPack>(
+    fn init_variable_len_extension<V: Extension + VariableLenPack>(
         &mut self,
         extension: &V,
         overwrite: bool,
@@ -751,6 +687,7 @@ impl<'data, S: BaseState> StateWithExtensionsMut<'data, S> {
         extension.pack_into_slice(data)
     }
 
+    /// Allocate some space for the extension in the TLV data
     fn alloc<V: Extension>(
         &mut self,
         length: usize,
@@ -759,25 +696,26 @@ impl<'data, S: BaseState> StateWithExtensionsMut<'data, S> {
         if V::TYPE.get_account_type() != S::ACCOUNT_TYPE {
             return Err(ProgramError::InvalidAccountData);
         }
+        let tlv_data = self.get_tlv_data_mut();
         let TlvIndices {
             type_start,
             length_start,
             value_start,
-        } = get_extension_indices::<V>(self.tlv_data, true)?;
+        } = get_extension_indices::<V>(tlv_data, true)?;
 
-        if self.tlv_data[type_start..].len() < add_type_and_length_to_len(length) {
+        if tlv_data[type_start..].len() < add_type_and_length_to_len(length) {
             return Err(ProgramError::InvalidAccountData);
         }
-        let extension_type = ExtensionType::try_from(&self.tlv_data[type_start..length_start])?;
+        let extension_type = ExtensionType::try_from(&tlv_data[type_start..length_start])?;
 
         if extension_type == ExtensionType::Uninitialized || overwrite {
             // write extension type
             let extension_type_array: [u8; 2] = V::TYPE.into();
-            let extension_type_ref = &mut self.tlv_data[type_start..length_start];
+            let extension_type_ref = &mut tlv_data[type_start..length_start];
             extension_type_ref.copy_from_slice(&extension_type_array);
             // write length
             let length_ref =
-                pod_from_bytes_mut::<Length>(&mut self.tlv_data[length_start..value_start])?;
+                pod_from_bytes_mut::<Length>(&mut tlv_data[length_start..value_start])?;
 
             // check that the length is the same if we're doing an alloc
             // with overwrite, otherwise a realloc should be done
@@ -788,7 +726,7 @@ impl<'data, S: BaseState> StateWithExtensionsMut<'data, S> {
             *length_ref = Length::try_from(length)?;
 
             let value_end = value_start.saturating_add(length);
-            Ok(&mut self.tlv_data[value_start..value_end])
+            Ok(&mut tlv_data[value_start..value_end])
         } else {
             // extension is already initialized, but no overwrite permission
             Err(TokenError::ExtensionAlreadyInitialized.into())
@@ -801,7 +739,7 @@ impl<'data, S: BaseState> StateWithExtensionsMut<'data, S> {
     /// already found in the data buffer, otherwise overwrites the
     /// existing extension with the default state. For all other ExtensionTypes,
     /// this is a no-op.
-    pub fn init_account_extension_from_type(
+    fn init_account_extension_from_type(
         &mut self,
         extension_type: ExtensionType,
     ) -> Result<(), ProgramError> {
@@ -836,17 +774,89 @@ impl<'data, S: BaseState> StateWithExtensionsMut<'data, S> {
     /// state initialization
     /// Noops if there is no room for an extension in the account, needed for
     /// pure base mints / accounts.
-    pub fn init_account_type(&mut self) -> Result<(), ProgramError> {
-        if !self.account_type.is_empty() {
-            if let Some(extension_type) = self.get_first_extension_type()? {
+    fn init_account_type(&mut self) -> Result<(), ProgramError> {
+        let first_extension_type = self.get_first_extension_type()?;
+        let account_type = self.get_account_type_mut();
+        if !account_type.is_empty() {
+            if let Some(extension_type) = first_extension_type {
                 let account_type = extension_type.get_account_type();
                 if account_type != S::ACCOUNT_TYPE {
                     return Err(TokenError::ExtensionBaseMismatch.into());
                 }
             }
-            self.account_type[0] = S::ACCOUNT_TYPE.into();
+            account_type[0] = S::ACCOUNT_TYPE.into();
         }
         Ok(())
+    }
+
+    /// Check that the account type on the account (if initialized) matches the
+    /// account type for any extensions initialized on the TLV data
+    fn check_account_type_matches_extension_type(&self) -> Result<(), ProgramError> {
+        if let Some(extension_type) = self.get_first_extension_type()? {
+            let account_type = extension_type.get_account_type();
+            if account_type != S::ACCOUNT_TYPE {
+                return Err(TokenError::ExtensionBaseMismatch.into());
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Encapsulates mutable base state data (mint or account) with possible
+/// extensions
+#[derive(Debug, PartialEq)]
+pub struct StateWithExtensionsMut<'data, S: BaseState> {
+    /// Unpacked base data
+    pub base: S,
+    /// Raw base data
+    base_data: &'data mut [u8],
+    /// Writable account type
+    account_type: &'data mut [u8],
+    /// Slice of data containing all TLV data, deserialized on demand
+    tlv_data: &'data mut [u8],
+}
+impl<'data, S: BaseState + Pack> StateWithExtensionsMut<'data, S> {
+    /// Unpack base state, leaving the extension data as a mutable slice
+    ///
+    /// Fails if the base state is not initialized.
+    pub fn unpack(input: &'data mut [u8]) -> Result<Self, ProgramError> {
+        check_min_len_and_not_multisig(input, S::SIZE_OF)?;
+        let (base_data, rest) = input.split_at_mut(S::SIZE_OF);
+        let base = S::unpack(base_data)?;
+        let (account_type, tlv_data) = unpack_type_and_tlv_data_mut::<S>(rest)?;
+        Ok(Self {
+            base,
+            base_data,
+            account_type,
+            tlv_data,
+        })
+    }
+
+    /// Unpack an uninitialized base state, leaving the extension data as a
+    /// mutable slice
+    ///
+    /// Fails if the base state has already been initialized.
+    pub fn unpack_uninitialized(input: &'data mut [u8]) -> Result<Self, ProgramError> {
+        check_min_len_and_not_multisig(input, S::SIZE_OF)?;
+        let (base_data, rest) = input.split_at_mut(S::SIZE_OF);
+        let base = S::unpack_unchecked(base_data)?;
+        if base.is_initialized() {
+            return Err(TokenError::AlreadyInUse.into());
+        }
+        let (account_type, tlv_data) = unpack_uninitialized_type_and_tlv_data_mut::<S>(rest)?;
+        let state = Self {
+            base,
+            base_data,
+            account_type,
+            tlv_data,
+        };
+        state.check_account_type_matches_extension_type()?;
+        Ok(state)
+    }
+
+    /// Packs base state data into the base data portion
+    pub fn pack_base(&mut self) {
+        S::pack_into_slice(&self.base, self.base_data);
     }
 }
 impl<'a, S: BaseState> BaseStateWithExtensions<S> for StateWithExtensionsMut<'a, S> {
@@ -854,14 +864,141 @@ impl<'a, S: BaseState> BaseStateWithExtensions<S> for StateWithExtensionsMut<'a,
         self.tlv_data
     }
 }
+impl<'a, S: BaseState> BaseStateWithExtensionsMut<S> for StateWithExtensionsMut<'a, S> {
+    fn get_tlv_data_mut(&mut self) -> &mut [u8] {
+        self.tlv_data
+    }
+    fn get_account_type_mut(&mut self) -> &mut [u8] {
+        self.account_type
+    }
+}
+
+/// Encapsulates mutable base state data (mint or account) with possible
+/// extensions, where the base state is Pod for zero-copy serde.
+#[derive(Debug, PartialEq)]
+pub struct PodStateWithExtensionsMut<'data, S: BaseState> {
+    /// Unpacked base data
+    pub base: &'data mut S,
+    /// Writable account type
+    account_type: &'data mut [u8],
+    /// Slice of data containing all TLV data, deserialized on demand
+    tlv_data: &'data mut [u8],
+}
+impl<'data, S: BaseState + Pod> PodStateWithExtensionsMut<'data, S> {
+    /// Unpack base state, leaving the extension data as a mutable slice
+    ///
+    /// Fails if the base state is not initialized.
+    pub fn unpack(input: &'data mut [u8]) -> Result<Self, ProgramError> {
+        check_min_len_and_not_multisig(input, S::SIZE_OF)?;
+        let (base_data, rest) = input.split_at_mut(S::SIZE_OF);
+        let base = pod_from_bytes_mut::<S>(base_data)?;
+        if !base.is_initialized() {
+            Err(ProgramError::UninitializedAccount)
+        } else {
+            let (account_type, tlv_data) = unpack_type_and_tlv_data_mut::<S>(rest)?;
+            Ok(Self {
+                base,
+                account_type,
+                tlv_data,
+            })
+        }
+    }
+
+    /// Unpack an uninitialized base state, leaving the extension data as a
+    /// mutable slice
+    ///
+    /// Fails if the base state has already been initialized.
+    pub fn unpack_uninitialized(input: &'data mut [u8]) -> Result<Self, ProgramError> {
+        check_min_len_and_not_multisig(input, S::SIZE_OF)?;
+        let (base_data, rest) = input.split_at_mut(S::SIZE_OF);
+        let base = pod_from_bytes_mut::<S>(base_data)?;
+        if base.is_initialized() {
+            return Err(TokenError::AlreadyInUse.into());
+        }
+        let (account_type, tlv_data) = unpack_uninitialized_type_and_tlv_data_mut::<S>(rest)?;
+        let state = Self {
+            base,
+            account_type,
+            tlv_data,
+        };
+        state.check_account_type_matches_extension_type()?;
+        Ok(state)
+    }
+}
+
+impl<'a, S: BaseState> BaseStateWithExtensions<S> for PodStateWithExtensionsMut<'a, S> {
+    fn get_tlv_data(&self) -> &[u8] {
+        self.tlv_data
+    }
+}
+impl<'a, S: BaseState> BaseStateWithExtensionsMut<S> for PodStateWithExtensionsMut<'a, S> {
+    fn get_tlv_data_mut(&mut self) -> &mut [u8] {
+        self.tlv_data
+    }
+    fn get_account_type_mut(&mut self) -> &mut [u8] {
+        self.account_type
+    }
+}
+
+fn unpack_tlv_data<S: BaseState>(rest: &[u8]) -> Result<&[u8], ProgramError> {
+    if let Some((account_type_index, tlv_start_index)) = type_and_tlv_indices::<S>(rest)? {
+        // type_and_tlv_indices() checks that returned indexes are within range
+        let account_type = AccountType::try_from(rest[account_type_index])
+            .map_err(|_| ProgramError::InvalidAccountData)?;
+        check_account_type::<S>(account_type)?;
+        Ok(&rest[tlv_start_index..])
+    } else {
+        Ok(&[])
+    }
+}
+
+fn unpack_type_and_tlv_data_with_check_mut<
+    S: BaseState,
+    F: Fn(AccountType) -> Result<(), ProgramError>,
+>(
+    rest: &mut [u8],
+    check_fn: F,
+) -> Result<(&mut [u8], &mut [u8]), ProgramError> {
+    if let Some((account_type_index, tlv_start_index)) = type_and_tlv_indices::<S>(rest)? {
+        // type_and_tlv_indices() checks that returned indexes are within range
+        let account_type = AccountType::try_from(rest[account_type_index])
+            .map_err(|_| ProgramError::InvalidAccountData)?;
+        check_fn(account_type)?;
+        let (account_type, tlv_data) = rest.split_at_mut(tlv_start_index);
+        Ok((
+            &mut account_type[account_type_index..tlv_start_index],
+            tlv_data,
+        ))
+    } else {
+        Ok((&mut [], &mut []))
+    }
+}
+
+fn unpack_type_and_tlv_data_mut<S: BaseState>(
+    rest: &mut [u8],
+) -> Result<(&mut [u8], &mut [u8]), ProgramError> {
+    unpack_type_and_tlv_data_with_check_mut::<S, _>(rest, check_account_type::<S>)
+}
+
+fn unpack_uninitialized_type_and_tlv_data_mut<S: BaseState>(
+    rest: &mut [u8],
+) -> Result<(&mut [u8], &mut [u8]), ProgramError> {
+    unpack_type_and_tlv_data_with_check_mut::<S, _>(rest, |account_type| {
+        if account_type != AccountType::Uninitialized {
+            Err(ProgramError::InvalidAccountData)
+        } else {
+            Ok(())
+        }
+    })
+}
 
 /// If AccountType is uninitialized, set it to the BaseState's ACCOUNT_TYPE;
 /// if AccountType is already set, check is set correctly for BaseState
 /// This method assumes that the `base_data` has already been packed with data
 /// of the desired type.
 pub fn set_account_type<S: BaseState>(input: &mut [u8]) -> Result<(), ProgramError> {
-    check_min_len_and_not_multisig(input, S::LEN)?;
-    let (base_data, rest) = input.split_at_mut(S::LEN);
+    check_min_len_and_not_multisig(input, S::SIZE_OF)?;
+    let (base_data, rest) = input.split_at_mut(S::SIZE_OF);
     if S::ACCOUNT_TYPE == AccountType::Account && !is_initialized_account(base_data)? {
         return Err(ProgramError::InvalidAccountData);
     }
@@ -927,7 +1064,7 @@ pub enum ExtensionType {
     ImmutableOwner,
     /// Require inbound transfers to have memo
     MemoTransfer,
-    /// Indicates that the tokens from this mint can't be transfered
+    /// Indicates that the tokens from this mint can't be transferred
     NonTransferable,
     /// Tokens accrue interest over time,
     InterestBearingConfig,
@@ -1081,7 +1218,7 @@ impl ExtensionType {
         extension_types: &[Self],
     ) -> Result<usize, ProgramError> {
         if extension_types.is_empty() {
-            Ok(S::LEN)
+            Ok(S::SIZE_OF)
         } else {
             let extension_size = Self::try_get_total_tlv_len(extension_types)?;
             let total_len = extension_size.saturating_add(BASE_ACCOUNT_AND_TYPE_LENGTH);
@@ -1184,7 +1321,7 @@ impl ExtensionType {
 }
 
 /// Trait for base states, specifying the associated enum
-pub trait BaseState: Pack + IsInitialized {
+pub trait BaseState: PackedSizeOf + IsInitialized {
     /// Associated extension type enum, checked at the start of TLV entries
     const ACCOUNT_TYPE: AccountType;
 }
@@ -1192,6 +1329,12 @@ impl BaseState for Account {
     const ACCOUNT_TYPE: AccountType = AccountType::Account;
 }
 impl BaseState for Mint {
+    const ACCOUNT_TYPE: AccountType = AccountType::Mint;
+}
+impl BaseState for PodAccount {
+    const ACCOUNT_TYPE: AccountType = AccountType::Account;
+}
+impl BaseState for PodMint {
     const ACCOUNT_TYPE: AccountType = AccountType::Mint;
 }
 
@@ -1255,7 +1398,7 @@ impl Extension for AccountPaddingTest {
 /// NOTE: Since this function deals with fixed-size extensions, it does not
 /// handle _decreasing_ the size of an account's data buffer, like the function
 /// `alloc_and_serialize_variable_len_extension` does.
-pub fn alloc_and_serialize<S: BaseState, V: Default + Extension + Pod>(
+pub(crate) fn alloc_and_serialize<S: BaseState + Pod, V: Default + Extension + Pod>(
     account_info: &AccountInfo,
     new_extension: &V,
     overwrite: bool,
@@ -1263,7 +1406,7 @@ pub fn alloc_and_serialize<S: BaseState, V: Default + Extension + Pod>(
     let previous_account_len = account_info.try_data_len()?;
     let new_account_len = {
         let data = account_info.try_borrow_data()?;
-        let state = StateWithExtensions::<S>::unpack(&data)?;
+        let state = PodStateWithExtensions::<S>::unpack(&data)?;
         state.try_get_new_account_len::<V>()?
     };
 
@@ -1275,7 +1418,7 @@ pub fn alloc_and_serialize<S: BaseState, V: Default + Extension + Pod>(
     if previous_account_len <= BASE_ACCOUNT_LENGTH {
         set_account_type::<S>(*buffer)?;
     }
-    let mut state = StateWithExtensionsMut::<S>::unpack(&mut buffer)?;
+    let mut state = PodStateWithExtensionsMut::<S>::unpack(&mut buffer)?;
 
     // Write the extension
     let extension = state.init_extension::<V>(overwrite)?;
@@ -1292,7 +1435,10 @@ pub fn alloc_and_serialize<S: BaseState, V: Default + Extension + Pod>(
 ///
 /// NOTE: Unlike the `reallocate` instruction, this function will reduce the
 /// size of an account if it has too many bytes allocated for the given value.
-pub fn alloc_and_serialize_variable_len_extension<S: BaseState, V: Extension + VariableLenPack>(
+pub(crate) fn alloc_and_serialize_variable_len_extension<
+    S: BaseState + Pod,
+    V: Extension + VariableLenPack,
+>(
     account_info: &AccountInfo,
     new_extension: &V,
     overwrite: bool,
@@ -1300,7 +1446,7 @@ pub fn alloc_and_serialize_variable_len_extension<S: BaseState, V: Extension + V
     let previous_account_len = account_info.try_data_len()?;
     let (new_account_len, extension_already_exists) = {
         let data = account_info.try_borrow_data()?;
-        let state = StateWithExtensions::<S>::unpack(&data)?;
+        let state = PodStateWithExtensions::<S>::unpack(&data)?;
         let new_account_len =
             state.try_get_new_account_len_for_variable_len_extension(new_extension)?;
         let extension_already_exists = state.get_extension_bytes::<V>().is_ok();
@@ -1317,20 +1463,20 @@ pub fn alloc_and_serialize_variable_len_extension<S: BaseState, V: Extension + V
         account_info.realloc(new_account_len, false)?;
         let mut buffer = account_info.try_borrow_mut_data()?;
         if extension_already_exists {
-            let mut state = StateWithExtensionsMut::<S>::unpack(&mut buffer)?;
+            let mut state = PodStateWithExtensionsMut::<S>::unpack(&mut buffer)?;
             state.realloc_variable_len_extension(new_extension)?;
         } else {
             if previous_account_len <= BASE_ACCOUNT_LENGTH {
                 set_account_type::<S>(*buffer)?;
             }
             // now alloc in the TLV buffer and write the data
-            let mut state = StateWithExtensionsMut::<S>::unpack(&mut buffer)?;
+            let mut state = PodStateWithExtensionsMut::<S>::unpack(&mut buffer)?;
             state.init_variable_len_extension(new_extension, false)?;
         }
     } else {
         // do it backwards otherwise, write the state, realloc TLV, then the account
         let mut buffer = account_info.try_borrow_mut_data()?;
-        let mut state = StateWithExtensionsMut::<S>::unpack(&mut buffer)?;
+        let mut state = PodStateWithExtensionsMut::<S>::unpack(&mut buffer)?;
         if extension_already_exists {
             state.realloc_variable_len_extension(new_extension)?;
         } else {
@@ -1354,7 +1500,10 @@ pub fn alloc_and_serialize_variable_len_extension<S: BaseState, V: Extension + V
 mod test {
     use {
         super::*,
-        crate::state::test::{TEST_ACCOUNT, TEST_ACCOUNT_SLICE, TEST_MINT, TEST_MINT_SLICE},
+        crate::{
+            pod::test::{TEST_POD_ACCOUNT, TEST_POD_MINT},
+            state::test::{TEST_ACCOUNT_SLICE, TEST_MINT_SLICE},
+        },
         bytemuck::Pod,
         solana_program::{
             account_info::{Account as GetAccount, IntoAccountInfo},
@@ -1428,8 +1577,8 @@ mod test {
 
     #[test]
     fn unpack_opaque_buffer() {
-        let state = StateWithExtensions::<Mint>::unpack(MINT_WITH_EXTENSION).unwrap();
-        assert_eq!(state.base, TEST_MINT);
+        let state = PodStateWithExtensions::<PodMint>::unpack(MINT_WITH_EXTENSION).unwrap();
+        assert_eq!(state.base, &TEST_POD_MINT);
         let extension = state.get_extension::<MintCloseAuthority>().unwrap();
         let close_authority =
             OptionalNonZeroPubkey::try_from(Some(Pubkey::new_from_array([1; 32]))).unwrap();
@@ -1439,16 +1588,16 @@ mod test {
             Err(ProgramError::InvalidAccountData)
         );
         assert_eq!(
-            StateWithExtensions::<Account>::unpack(MINT_WITH_EXTENSION),
-            Err(ProgramError::InvalidAccountData)
+            PodStateWithExtensions::<PodAccount>::unpack(MINT_WITH_EXTENSION),
+            Err(ProgramError::UninitializedAccount)
         );
 
-        let state = StateWithExtensions::<Mint>::unpack(TEST_MINT_SLICE).unwrap();
-        assert_eq!(state.base, TEST_MINT);
+        let state = PodStateWithExtensions::<PodMint>::unpack(TEST_MINT_SLICE).unwrap();
+        assert_eq!(state.base, &TEST_POD_MINT);
 
         let mut test_mint = TEST_MINT_SLICE.to_vec();
-        let state = StateWithExtensionsMut::<Mint>::unpack(&mut test_mint).unwrap();
-        assert_eq!(state.base, TEST_MINT);
+        let state = PodStateWithExtensionsMut::<PodMint>::unpack(&mut test_mint).unwrap();
+        assert_eq!(state.base, &TEST_POD_MINT);
     }
 
     #[test]
@@ -1456,15 +1605,15 @@ mod test {
         // input buffer too small
         let mut buffer = vec![0, 3];
         assert_eq!(
-            StateWithExtensions::<Mint>::unpack(&buffer),
+            PodStateWithExtensions::<PodMint>::unpack(&buffer),
             Err(ProgramError::InvalidAccountData)
         );
         assert_eq!(
-            StateWithExtensionsMut::<Mint>::unpack(&mut buffer),
+            PodStateWithExtensionsMut::<PodMint>::unpack(&mut buffer),
             Err(ProgramError::InvalidAccountData)
         );
         assert_eq!(
-            StateWithExtensionsMut::<Mint>::unpack_uninitialized(&mut buffer),
+            PodStateWithExtensionsMut::<PodMint>::unpack_uninitialized(&mut buffer),
             Err(ProgramError::InvalidAccountData)
         );
 
@@ -1472,7 +1621,7 @@ mod test {
         let mut buffer = MINT_WITH_EXTENSION.to_vec();
         buffer[BASE_ACCOUNT_LENGTH] = 3;
         assert_eq!(
-            StateWithExtensions::<Mint>::unpack(&buffer),
+            PodStateWithExtensions::<PodMint>::unpack(&buffer),
             Err(ProgramError::InvalidAccountData)
         );
 
@@ -1480,22 +1629,22 @@ mod test {
         let mut buffer = MINT_WITH_EXTENSION.to_vec();
         buffer[45] = 0;
         assert_eq!(
-            StateWithExtensions::<Mint>::unpack(&buffer),
+            PodStateWithExtensions::<PodMint>::unpack(&buffer),
             Err(ProgramError::UninitializedAccount)
         );
 
         // tweak the padding
         let mut buffer = MINT_WITH_EXTENSION.to_vec();
-        buffer[Mint::LEN] = 100;
+        buffer[PodMint::SIZE_OF] = 100;
         assert_eq!(
-            StateWithExtensions::<Mint>::unpack(&buffer),
+            PodStateWithExtensions::<PodMint>::unpack(&buffer),
             Err(ProgramError::InvalidAccountData)
         );
 
         // tweak the extension type
         let mut buffer = MINT_WITH_EXTENSION.to_vec();
         buffer[BASE_ACCOUNT_LENGTH + 1] = 2;
-        let state = StateWithExtensions::<Mint>::unpack(&buffer).unwrap();
+        let state = PodStateWithExtensions::<PodMint>::unpack(&buffer).unwrap();
         assert_eq!(
             state.get_extension::<TransferFeeConfig>(),
             Err(ProgramError::Custom(
@@ -1506,7 +1655,7 @@ mod test {
         // tweak the length, too big
         let mut buffer = MINT_WITH_EXTENSION.to_vec();
         buffer[BASE_ACCOUNT_LENGTH + 3] = 100;
-        let state = StateWithExtensions::<Mint>::unpack(&buffer).unwrap();
+        let state = PodStateWithExtensions::<PodMint>::unpack(&buffer).unwrap();
         assert_eq!(
             state.get_extension::<TransferFeeConfig>(),
             Err(ProgramError::InvalidAccountData)
@@ -1515,7 +1664,7 @@ mod test {
         // tweak the length, too small
         let mut buffer = MINT_WITH_EXTENSION.to_vec();
         buffer[BASE_ACCOUNT_LENGTH + 3] = 10;
-        let state = StateWithExtensions::<Mint>::unpack(&buffer).unwrap();
+        let state = PodStateWithExtensions::<PodMint>::unpack(&buffer).unwrap();
         assert_eq!(
             state.get_extension::<TransferFeeConfig>(),
             Err(ProgramError::InvalidAccountData)
@@ -1523,7 +1672,7 @@ mod test {
 
         // data buffer is too small
         let buffer = &MINT_WITH_EXTENSION[..MINT_WITH_EXTENSION.len() - 1];
-        let state = StateWithExtensions::<Mint>::unpack(buffer).unwrap();
+        let state = PodStateWithExtensions::<PodMint>::unpack(buffer).unwrap();
         assert_eq!(
             state.get_extension::<MintCloseAuthority>(),
             Err(ProgramError::InvalidAccountData)
@@ -1562,7 +1711,7 @@ mod test {
 
     #[test]
     fn mint_with_extension_pack_unpack() {
-        let mint_size = ExtensionType::try_calculate_account_len::<Mint>(&[
+        let mint_size = ExtensionType::try_calculate_account_len::<PodMint>(&[
             ExtensionType::MintCloseAuthority,
             ExtensionType::TransferFeeConfig,
         ])
@@ -1571,11 +1720,12 @@ mod test {
 
         // fail unpack
         assert_eq!(
-            StateWithExtensionsMut::<Mint>::unpack(&mut buffer),
+            PodStateWithExtensionsMut::<PodMint>::unpack(&mut buffer),
             Err(ProgramError::UninitializedAccount),
         );
 
-        let mut state = StateWithExtensionsMut::<Mint>::unpack_uninitialized(&mut buffer).unwrap();
+        let mut state =
+            PodStateWithExtensionsMut::<PodMint>::unpack_uninitialized(&mut buffer).unwrap();
         // fail init account extension
         assert_eq!(
             state.init_extension::<TransferFeeAmount>(true),
@@ -1602,7 +1752,7 @@ mod test {
 
         // fail unpack as account, a mint extension was written
         assert_eq!(
-            StateWithExtensionsMut::<Account>::unpack_uninitialized(&mut buffer),
+            PodStateWithExtensionsMut::<PodAccount>::unpack_uninitialized(&mut buffer),
             Err(ProgramError::Custom(
                 TokenError::ExtensionBaseMismatch as u32
             ))
@@ -1610,19 +1760,19 @@ mod test {
 
         // fail unpack again, still no base data
         assert_eq!(
-            StateWithExtensionsMut::<Mint>::unpack(&mut buffer.clone()),
+            PodStateWithExtensionsMut::<PodMint>::unpack(&mut buffer.clone()),
             Err(ProgramError::UninitializedAccount),
         );
 
         // write base mint
-        let mut state = StateWithExtensionsMut::<Mint>::unpack_uninitialized(&mut buffer).unwrap();
-        state.base = TEST_MINT;
-        state.pack_base();
+        let mut state =
+            PodStateWithExtensionsMut::<PodMint>::unpack_uninitialized(&mut buffer).unwrap();
+        *state.base = TEST_POD_MINT;
         state.init_account_type().unwrap();
 
         // check raw buffer
         let mut expect = TEST_MINT_SLICE.to_vec();
-        expect.extend_from_slice(&[0; BASE_ACCOUNT_LENGTH - Mint::LEN]); // padding
+        expect.extend_from_slice(&[0; BASE_ACCOUNT_LENGTH - PodMint::SIZE_OF]); // padding
         expect.push(AccountType::Mint.into());
         expect.extend_from_slice(&(ExtensionType::MintCloseAuthority as u16).to_le_bytes());
         expect
@@ -1633,19 +1783,18 @@ mod test {
         expect.extend_from_slice(&[0; size_of::<TransferFeeConfig>()]);
         assert_eq!(expect, buffer);
 
-        // unpack uninitialized will now fail because the Mint is now initialized
+        // unpack uninitialized will now fail because the PodMint is now initialized
         assert_eq!(
-            StateWithExtensionsMut::<Mint>::unpack_uninitialized(&mut buffer.clone()),
+            PodStateWithExtensionsMut::<PodMint>::unpack_uninitialized(&mut buffer.clone()),
             Err(TokenError::AlreadyInUse.into()),
         );
 
         // check unpacking
-        let mut state = StateWithExtensionsMut::<Mint>::unpack(&mut buffer).unwrap();
+        let mut state = PodStateWithExtensionsMut::<PodMint>::unpack(&mut buffer).unwrap();
 
         // update base
-        state.base = TEST_MINT;
-        state.base.supply += 100;
-        state.pack_base();
+        *state.base = TEST_POD_MINT;
+        state.base.supply = (u64::from(state.base.supply) + 100).into();
 
         // check unpacking
         let unpacked_extension = state.get_extension_mut::<MintCloseAuthority>().unwrap();
@@ -1656,16 +1805,16 @@ mod test {
         unpacked_extension.close_authority = close_authority;
 
         // check updates are propagated
-        let base = state.base;
-        let state = StateWithExtensions::<Mint>::unpack(&buffer).unwrap();
-        assert_eq!(state.base, base);
+        let base = *state.base;
+        let state = PodStateWithExtensions::<PodMint>::unpack(&buffer).unwrap();
+        assert_eq!(state.base, &base);
         let unpacked_extension = state.get_extension::<MintCloseAuthority>().unwrap();
         assert_eq!(*unpacked_extension, MintCloseAuthority { close_authority });
 
         // check raw buffer
-        let mut expect = vec![0; Mint::LEN];
-        Mint::pack_into_slice(&base, &mut expect);
-        expect.extend_from_slice(&[0; BASE_ACCOUNT_LENGTH - Mint::LEN]); // padding
+        let mut expect = vec![];
+        expect.extend_from_slice(bytemuck::bytes_of(&base));
+        expect.extend_from_slice(&[0; BASE_ACCOUNT_LENGTH - PodMint::SIZE_OF]); // padding
         expect.push(AccountType::Mint.into());
         expect.extend_from_slice(&(ExtensionType::MintCloseAuthority as u16).to_le_bytes());
         expect
@@ -1678,11 +1827,11 @@ mod test {
 
         // fail unpack as an account
         assert_eq!(
-            StateWithExtensions::<Account>::unpack(&buffer),
-            Err(ProgramError::InvalidAccountData),
+            PodStateWithExtensions::<PodAccount>::unpack(&buffer),
+            Err(ProgramError::UninitializedAccount),
         );
 
-        let mut state = StateWithExtensionsMut::<Mint>::unpack(&mut buffer).unwrap();
+        let mut state = PodStateWithExtensionsMut::<PodMint>::unpack(&mut buffer).unwrap();
         // init one more extension
         let mint_transfer_fee = test_transfer_fee_config();
         let new_extension = state.init_extension::<TransferFeeConfig>(true).unwrap();
@@ -1702,9 +1851,9 @@ mod test {
         );
 
         // check raw buffer
-        let mut expect = vec![0; Mint::LEN];
-        Mint::pack_into_slice(&base, &mut expect);
-        expect.extend_from_slice(&[0; BASE_ACCOUNT_LENGTH - Mint::LEN]); // padding
+        let mut expect = vec![];
+        expect.extend_from_slice(pod_bytes_of(&base));
+        expect.extend_from_slice(&[0; BASE_ACCOUNT_LENGTH - PodMint::SIZE_OF]); // padding
         expect.push(AccountType::Mint.into());
         expect.extend_from_slice(&(ExtensionType::MintCloseAuthority as u16).to_le_bytes());
         expect
@@ -1716,7 +1865,7 @@ mod test {
         assert_eq!(expect, buffer);
 
         // fail to init one more extension that does not fit
-        let mut state = StateWithExtensionsMut::<Mint>::unpack(&mut buffer).unwrap();
+        let mut state = PodStateWithExtensionsMut::<PodMint>::unpack(&mut buffer).unwrap();
         assert_eq!(
             state.init_extension::<MintPaddingTest>(true),
             Err(ProgramError::InvalidAccountData),
@@ -1725,14 +1874,15 @@ mod test {
 
     #[test]
     fn mint_extension_any_order() {
-        let mint_size = ExtensionType::try_calculate_account_len::<Mint>(&[
+        let mint_size = ExtensionType::try_calculate_account_len::<PodMint>(&[
             ExtensionType::MintCloseAuthority,
             ExtensionType::TransferFeeConfig,
         ])
         .unwrap();
         let mut buffer = vec![0; mint_size];
 
-        let mut state = StateWithExtensionsMut::<Mint>::unpack_uninitialized(&mut buffer).unwrap();
+        let mut state =
+            PodStateWithExtensionsMut::<PodMint>::unpack_uninitialized(&mut buffer).unwrap();
         // write extensions
         let close_authority =
             OptionalNonZeroPubkey::try_from(Some(Pubkey::new_from_array([1; 32]))).unwrap();
@@ -1756,18 +1906,17 @@ mod test {
         );
 
         // write base mint
-        let mut state = StateWithExtensionsMut::<Mint>::unpack_uninitialized(&mut buffer).unwrap();
-        state.base = TEST_MINT;
-        state.pack_base();
+        let mut state =
+            PodStateWithExtensionsMut::<PodMint>::unpack_uninitialized(&mut buffer).unwrap();
+        *state.base = TEST_POD_MINT;
         state.init_account_type().unwrap();
 
         let mut other_buffer = vec![0; mint_size];
         let mut state =
-            StateWithExtensionsMut::<Mint>::unpack_uninitialized(&mut other_buffer).unwrap();
+            PodStateWithExtensionsMut::<PodMint>::unpack_uninitialized(&mut other_buffer).unwrap();
 
         // write base mint
-        state.base = TEST_MINT;
-        state.pack_base();
+        *state.base = TEST_POD_MINT;
         state.init_account_type().unwrap();
 
         // write extensions in a different order
@@ -1794,8 +1943,8 @@ mod test {
 
         // buffers are NOT the same because written in a different order
         assert_ne!(buffer, other_buffer);
-        let state = StateWithExtensions::<Mint>::unpack(&buffer).unwrap();
-        let other_state = StateWithExtensions::<Mint>::unpack(&other_buffer).unwrap();
+        let state = PodStateWithExtensions::<PodMint>::unpack(&buffer).unwrap();
+        let other_state = PodStateWithExtensions::<PodMint>::unpack(&other_buffer).unwrap();
 
         // BUT mint and extensions are the same
         assert_eq!(
@@ -1813,19 +1962,19 @@ mod test {
     fn mint_with_multisig_len() {
         let mut buffer = vec![0; Multisig::LEN];
         assert_eq!(
-            StateWithExtensionsMut::<Mint>::unpack_uninitialized(&mut buffer),
+            PodStateWithExtensionsMut::<PodMint>::unpack_uninitialized(&mut buffer),
             Err(ProgramError::InvalidAccountData),
         );
         let mint_size =
-            ExtensionType::try_calculate_account_len::<Mint>(&[ExtensionType::MintPaddingTest])
+            ExtensionType::try_calculate_account_len::<PodMint>(&[ExtensionType::MintPaddingTest])
                 .unwrap();
         assert_eq!(mint_size, Multisig::LEN + size_of::<ExtensionType>());
         let mut buffer = vec![0; mint_size];
 
         // write base mint
-        let mut state = StateWithExtensionsMut::<Mint>::unpack_uninitialized(&mut buffer).unwrap();
-        state.base = TEST_MINT;
-        state.pack_base();
+        let mut state =
+            PodStateWithExtensionsMut::<PodMint>::unpack_uninitialized(&mut buffer).unwrap();
+        *state.base = TEST_POD_MINT;
         state.init_account_type().unwrap();
 
         // write padding
@@ -1841,7 +1990,7 @@ mod test {
 
         // check raw buffer
         let mut expect = TEST_MINT_SLICE.to_vec();
-        expect.extend_from_slice(&[0; BASE_ACCOUNT_LENGTH - Mint::LEN]); // padding
+        expect.extend_from_slice(&[0; BASE_ACCOUNT_LENGTH - PodMint::SIZE_OF]); // padding
         expect.push(AccountType::Mint.into());
         expect.extend_from_slice(&(ExtensionType::MintPaddingTest as u16).to_le_bytes());
         expect.extend_from_slice(&(pod_get_packed_len::<MintPaddingTest>() as u16).to_le_bytes());
@@ -1852,7 +2001,7 @@ mod test {
 
     #[test]
     fn account_with_extension_pack_unpack() {
-        let account_size = ExtensionType::try_calculate_account_len::<Account>(&[
+        let account_size = ExtensionType::try_calculate_account_len::<PodAccount>(&[
             ExtensionType::TransferFeeAmount,
         ])
         .unwrap();
@@ -1860,12 +2009,12 @@ mod test {
 
         // fail unpack
         assert_eq!(
-            StateWithExtensionsMut::<Account>::unpack(&mut buffer),
+            PodStateWithExtensionsMut::<PodAccount>::unpack(&mut buffer),
             Err(ProgramError::UninitializedAccount),
         );
 
         let mut state =
-            StateWithExtensionsMut::<Account>::unpack_uninitialized(&mut buffer).unwrap();
+            PodStateWithExtensionsMut::<PodAccount>::unpack_uninitialized(&mut buffer).unwrap();
         // fail init mint extension
         assert_eq!(
             state.init_extension::<TransferFeeConfig>(true),
@@ -1883,17 +2032,16 @@ mod test {
 
         // fail unpack again, still no base data
         assert_eq!(
-            StateWithExtensionsMut::<Account>::unpack(&mut buffer.clone()),
+            PodStateWithExtensionsMut::<PodAccount>::unpack(&mut buffer.clone()),
             Err(ProgramError::UninitializedAccount),
         );
 
         // write base account
         let mut state =
-            StateWithExtensionsMut::<Account>::unpack_uninitialized(&mut buffer).unwrap();
-        state.base = TEST_ACCOUNT;
-        state.pack_base();
+            PodStateWithExtensionsMut::<PodAccount>::unpack_uninitialized(&mut buffer).unwrap();
+        *state.base = TEST_POD_ACCOUNT;
         state.init_account_type().unwrap();
-        let base = state.base;
+        let base = *state.base;
 
         // check raw buffer
         let mut expect = TEST_ACCOUNT_SLICE.to_vec();
@@ -1904,17 +2052,16 @@ mod test {
         assert_eq!(expect, buffer);
 
         // check unpacking
-        let mut state = StateWithExtensionsMut::<Account>::unpack(&mut buffer).unwrap();
-        assert_eq!(state.base, base);
+        let mut state = PodStateWithExtensionsMut::<PodAccount>::unpack(&mut buffer).unwrap();
+        assert_eq!(state.base, &base);
         assert_eq!(
             &state.get_extension_types().unwrap(),
             &[ExtensionType::TransferFeeAmount]
         );
 
         // update base
-        state.base = TEST_ACCOUNT;
-        state.base.amount += 100;
-        state.pack_base();
+        *state.base = TEST_POD_ACCOUNT;
+        state.base.amount = (u64::from(state.base.amount) + 100).into();
 
         // check unpacking
         let unpacked_extension = state.get_extension_mut::<TransferFeeAmount>().unwrap();
@@ -1925,15 +2072,15 @@ mod test {
         unpacked_extension.withheld_amount = withheld_amount;
 
         // check updates are propagated
-        let base = state.base;
-        let state = StateWithExtensions::<Account>::unpack(&buffer).unwrap();
-        assert_eq!(state.base, base);
+        let base = *state.base;
+        let state = PodStateWithExtensions::<PodAccount>::unpack(&buffer).unwrap();
+        assert_eq!(state.base, &base);
         let unpacked_extension = state.get_extension::<TransferFeeAmount>().unwrap();
         assert_eq!(*unpacked_extension, TransferFeeAmount { withheld_amount });
 
         // check raw buffer
-        let mut expect = vec![0; Account::LEN];
-        Account::pack_into_slice(&base, &mut expect);
+        let mut expect = vec![];
+        expect.extend_from_slice(pod_bytes_of(&base));
         expect.push(AccountType::Account.into());
         expect.extend_from_slice(&(ExtensionType::TransferFeeAmount as u16).to_le_bytes());
         expect.extend_from_slice(&(pod_get_packed_len::<TransferFeeAmount>() as u16).to_le_bytes());
@@ -1942,7 +2089,7 @@ mod test {
 
         // fail unpack as a mint
         assert_eq!(
-            StateWithExtensions::<Mint>::unpack(&buffer),
+            PodStateWithExtensions::<PodMint>::unpack(&buffer),
             Err(ProgramError::InvalidAccountData),
         );
     }
@@ -1951,10 +2098,10 @@ mod test {
     fn account_with_multisig_len() {
         let mut buffer = vec![0; Multisig::LEN];
         assert_eq!(
-            StateWithExtensionsMut::<Account>::unpack_uninitialized(&mut buffer),
+            PodStateWithExtensionsMut::<PodAccount>::unpack_uninitialized(&mut buffer),
             Err(ProgramError::InvalidAccountData),
         );
-        let account_size = ExtensionType::try_calculate_account_len::<Account>(&[
+        let account_size = ExtensionType::try_calculate_account_len::<PodAccount>(&[
             ExtensionType::AccountPaddingTest,
         ])
         .unwrap();
@@ -1963,9 +2110,8 @@ mod test {
 
         // write base account
         let mut state =
-            StateWithExtensionsMut::<Account>::unpack_uninitialized(&mut buffer).unwrap();
-        state.base = TEST_ACCOUNT;
-        state.pack_base();
+            PodStateWithExtensionsMut::<PodAccount>::unpack_uninitialized(&mut buffer).unwrap();
+        *state.base = TEST_POD_ACCOUNT;
         state.init_account_type().unwrap();
 
         // write padding
@@ -1994,108 +2140,110 @@ mod test {
     fn test_set_account_type() {
         // account with buffer big enough for AccountType and Extension
         let mut buffer = TEST_ACCOUNT_SLICE.to_vec();
-        let needed_len =
-            ExtensionType::try_calculate_account_len::<Account>(&[ExtensionType::ImmutableOwner])
-                .unwrap()
-                - buffer.len();
+        let needed_len = ExtensionType::try_calculate_account_len::<PodAccount>(&[
+            ExtensionType::ImmutableOwner,
+        ])
+        .unwrap()
+            - buffer.len();
         buffer.append(&mut vec![0; needed_len]);
-        let err = StateWithExtensionsMut::<Account>::unpack(&mut buffer).unwrap_err();
+        let err = PodStateWithExtensionsMut::<PodAccount>::unpack(&mut buffer).unwrap_err();
         assert_eq!(err, ProgramError::InvalidAccountData);
-        set_account_type::<Account>(&mut buffer).unwrap();
+        set_account_type::<PodAccount>(&mut buffer).unwrap();
         // unpack is viable after manual set_account_type
-        let mut state = StateWithExtensionsMut::<Account>::unpack(&mut buffer).unwrap();
-        assert_eq!(state.base, TEST_ACCOUNT);
+        let mut state = PodStateWithExtensionsMut::<PodAccount>::unpack(&mut buffer).unwrap();
+        assert_eq!(state.base, &TEST_POD_ACCOUNT);
         assert_eq!(state.account_type[0], AccountType::Account as u8);
         state.init_extension::<ImmutableOwner>(true).unwrap(); // just confirming initialization works
 
         // account with buffer big enough for AccountType only
         let mut buffer = TEST_ACCOUNT_SLICE.to_vec();
         buffer.append(&mut vec![0; 2]);
-        let err = StateWithExtensionsMut::<Account>::unpack(&mut buffer).unwrap_err();
+        let err = PodStateWithExtensionsMut::<PodAccount>::unpack(&mut buffer).unwrap_err();
         assert_eq!(err, ProgramError::InvalidAccountData);
-        set_account_type::<Account>(&mut buffer).unwrap();
+        set_account_type::<PodAccount>(&mut buffer).unwrap();
         // unpack is viable after manual set_account_type
-        let state = StateWithExtensionsMut::<Account>::unpack(&mut buffer).unwrap();
-        assert_eq!(state.base, TEST_ACCOUNT);
+        let state = PodStateWithExtensionsMut::<PodAccount>::unpack(&mut buffer).unwrap();
+        assert_eq!(state.base, &TEST_POD_ACCOUNT);
         assert_eq!(state.account_type[0], AccountType::Account as u8);
 
         // account with AccountType already set => noop
         let mut buffer = TEST_ACCOUNT_SLICE.to_vec();
         buffer.append(&mut vec![2, 0]);
-        let _ = StateWithExtensionsMut::<Account>::unpack(&mut buffer).unwrap();
-        set_account_type::<Account>(&mut buffer).unwrap();
-        let state = StateWithExtensionsMut::<Account>::unpack(&mut buffer).unwrap();
-        assert_eq!(state.base, TEST_ACCOUNT);
+        let _ = PodStateWithExtensionsMut::<PodAccount>::unpack(&mut buffer).unwrap();
+        set_account_type::<PodAccount>(&mut buffer).unwrap();
+        let state = PodStateWithExtensionsMut::<PodAccount>::unpack(&mut buffer).unwrap();
+        assert_eq!(state.base, &TEST_POD_ACCOUNT);
         assert_eq!(state.account_type[0], AccountType::Account as u8);
 
         // account with wrong AccountType fails
         let mut buffer = TEST_ACCOUNT_SLICE.to_vec();
         buffer.append(&mut vec![1, 0]);
-        let err = StateWithExtensionsMut::<Account>::unpack(&mut buffer).unwrap_err();
+        let err = PodStateWithExtensionsMut::<PodAccount>::unpack(&mut buffer).unwrap_err();
         assert_eq!(err, ProgramError::InvalidAccountData);
-        let err = set_account_type::<Account>(&mut buffer).unwrap_err();
+        let err = set_account_type::<PodAccount>(&mut buffer).unwrap_err();
         assert_eq!(err, ProgramError::InvalidAccountData);
 
         // mint with buffer big enough for AccountType and Extension
         let mut buffer = TEST_MINT_SLICE.to_vec();
-        let needed_len =
-            ExtensionType::try_calculate_account_len::<Mint>(&[ExtensionType::MintCloseAuthority])
-                .unwrap()
-                - buffer.len();
+        let needed_len = ExtensionType::try_calculate_account_len::<PodMint>(&[
+            ExtensionType::MintCloseAuthority,
+        ])
+        .unwrap()
+            - buffer.len();
         buffer.append(&mut vec![0; needed_len]);
-        let err = StateWithExtensionsMut::<Mint>::unpack(&mut buffer).unwrap_err();
+        let err = PodStateWithExtensionsMut::<PodMint>::unpack(&mut buffer).unwrap_err();
         assert_eq!(err, ProgramError::InvalidAccountData);
-        set_account_type::<Mint>(&mut buffer).unwrap();
+        set_account_type::<PodMint>(&mut buffer).unwrap();
         // unpack is viable after manual set_account_type
-        let mut state = StateWithExtensionsMut::<Mint>::unpack(&mut buffer).unwrap();
-        assert_eq!(state.base, TEST_MINT);
+        let mut state = PodStateWithExtensionsMut::<PodMint>::unpack(&mut buffer).unwrap();
+        assert_eq!(state.base, &TEST_POD_MINT);
         assert_eq!(state.account_type[0], AccountType::Mint as u8);
         state.init_extension::<MintCloseAuthority>(true).unwrap();
 
         // mint with buffer big enough for AccountType only
         let mut buffer = TEST_MINT_SLICE.to_vec();
-        buffer.append(&mut vec![0; Account::LEN - Mint::LEN]);
+        buffer.append(&mut vec![0; PodAccount::SIZE_OF - PodMint::SIZE_OF]);
         buffer.append(&mut vec![0; 2]);
-        let err = StateWithExtensionsMut::<Mint>::unpack(&mut buffer).unwrap_err();
+        let err = PodStateWithExtensionsMut::<PodMint>::unpack(&mut buffer).unwrap_err();
         assert_eq!(err, ProgramError::InvalidAccountData);
-        set_account_type::<Mint>(&mut buffer).unwrap();
+        set_account_type::<PodMint>(&mut buffer).unwrap();
         // unpack is viable after manual set_account_type
-        let state = StateWithExtensionsMut::<Mint>::unpack(&mut buffer).unwrap();
-        assert_eq!(state.base, TEST_MINT);
+        let state = PodStateWithExtensionsMut::<PodMint>::unpack(&mut buffer).unwrap();
+        assert_eq!(state.base, &TEST_POD_MINT);
         assert_eq!(state.account_type[0], AccountType::Mint as u8);
 
         // mint with AccountType already set => noop
         let mut buffer = TEST_MINT_SLICE.to_vec();
-        buffer.append(&mut vec![0; Account::LEN - Mint::LEN]);
+        buffer.append(&mut vec![0; PodAccount::SIZE_OF - PodMint::SIZE_OF]);
         buffer.append(&mut vec![1, 0]);
-        set_account_type::<Mint>(&mut buffer).unwrap();
-        let state = StateWithExtensionsMut::<Mint>::unpack(&mut buffer).unwrap();
-        assert_eq!(state.base, TEST_MINT);
+        set_account_type::<PodMint>(&mut buffer).unwrap();
+        let state = PodStateWithExtensionsMut::<PodMint>::unpack(&mut buffer).unwrap();
+        assert_eq!(state.base, &TEST_POD_MINT);
         assert_eq!(state.account_type[0], AccountType::Mint as u8);
 
         // mint with wrong AccountType fails
         let mut buffer = TEST_MINT_SLICE.to_vec();
-        buffer.append(&mut vec![0; Account::LEN - Mint::LEN]);
+        buffer.append(&mut vec![0; PodAccount::SIZE_OF - PodMint::SIZE_OF]);
         buffer.append(&mut vec![2, 0]);
-        let err = StateWithExtensionsMut::<Mint>::unpack(&mut buffer).unwrap_err();
+        let err = PodStateWithExtensionsMut::<PodMint>::unpack(&mut buffer).unwrap_err();
         assert_eq!(err, ProgramError::InvalidAccountData);
-        let err = set_account_type::<Mint>(&mut buffer).unwrap_err();
+        let err = set_account_type::<PodMint>(&mut buffer).unwrap_err();
         assert_eq!(err, ProgramError::InvalidAccountData);
     }
 
     #[test]
     fn test_set_account_type_wrongly() {
-        // try to set Account account_type to Mint
+        // try to set PodAccount account_type to PodMint
         let mut buffer = TEST_ACCOUNT_SLICE.to_vec();
         buffer.append(&mut vec![0; 2]);
-        let err = set_account_type::<Mint>(&mut buffer).unwrap_err();
+        let err = set_account_type::<PodMint>(&mut buffer).unwrap_err();
         assert_eq!(err, ProgramError::InvalidAccountData);
 
-        // try to set Mint account_type to Account
+        // try to set PodMint account_type to PodAccount
         let mut buffer = TEST_MINT_SLICE.to_vec();
-        buffer.append(&mut vec![0; Account::LEN - Mint::LEN]);
+        buffer.append(&mut vec![0; PodAccount::SIZE_OF - PodMint::SIZE_OF]);
         buffer.append(&mut vec![0; 2]);
-        let err = set_account_type::<Account>(&mut buffer).unwrap_err();
+        let err = set_account_type::<PodAccount>(&mut buffer).unwrap_err();
         assert_eq!(err, ProgramError::InvalidAccountData);
     }
 
@@ -2150,17 +2298,17 @@ mod test {
 
     #[test]
     fn mint_without_extensions() {
-        let space = ExtensionType::try_calculate_account_len::<Mint>(&[]).unwrap();
+        let space = ExtensionType::try_calculate_account_len::<PodMint>(&[]).unwrap();
         let mut buffer = vec![0; space];
         assert_eq!(
-            StateWithExtensionsMut::<Account>::unpack_uninitialized(&mut buffer),
+            PodStateWithExtensionsMut::<PodAccount>::unpack_uninitialized(&mut buffer),
             Err(ProgramError::InvalidAccountData),
         );
 
         // write base account
-        let mut state = StateWithExtensionsMut::<Mint>::unpack_uninitialized(&mut buffer).unwrap();
-        state.base = TEST_MINT;
-        state.pack_base();
+        let mut state =
+            PodStateWithExtensionsMut::<PodMint>::unpack_uninitialized(&mut buffer).unwrap();
+        *state.base = TEST_POD_MINT;
         state.init_account_type().unwrap();
 
         // fail init extension
@@ -2175,12 +2323,12 @@ mod test {
     #[test]
     fn test_init_nonzero_default() {
         let mint_size =
-            ExtensionType::try_calculate_account_len::<Mint>(&[ExtensionType::MintPaddingTest])
+            ExtensionType::try_calculate_account_len::<PodMint>(&[ExtensionType::MintPaddingTest])
                 .unwrap();
         let mut buffer = vec![0; mint_size];
-        let mut state = StateWithExtensionsMut::<Mint>::unpack_uninitialized(&mut buffer).unwrap();
-        state.base = TEST_MINT;
-        state.pack_base();
+        let mut state =
+            PodStateWithExtensionsMut::<PodMint>::unpack_uninitialized(&mut buffer).unwrap();
+        *state.base = TEST_POD_MINT;
         state.init_account_type().unwrap();
         let extension = state.init_extension::<MintPaddingTest>(true).unwrap();
         assert_eq!(extension.padding1, [1; 128]);
@@ -2190,11 +2338,13 @@ mod test {
 
     #[test]
     fn test_init_buffer_too_small() {
-        let mint_size =
-            ExtensionType::try_calculate_account_len::<Mint>(&[ExtensionType::MintCloseAuthority])
-                .unwrap();
+        let mint_size = ExtensionType::try_calculate_account_len::<PodMint>(&[
+            ExtensionType::MintCloseAuthority,
+        ])
+        .unwrap();
         let mut buffer = vec![0; mint_size - 1];
-        let mut state = StateWithExtensionsMut::<Mint>::unpack_uninitialized(&mut buffer).unwrap();
+        let mut state =
+            PodStateWithExtensionsMut::<PodMint>::unpack_uninitialized(&mut buffer).unwrap();
         let err = state
             .init_extension::<MintCloseAuthority>(true)
             .unwrap_err();
@@ -2205,13 +2355,15 @@ mod test {
         let err = state.get_extension_mut::<MintCloseAuthority>().unwrap_err();
         assert_eq!(err, ProgramError::InvalidAccountData);
 
-        let mut buffer = vec![0; Mint::LEN + 2];
-        let err = StateWithExtensionsMut::<Mint>::unpack_uninitialized(&mut buffer).unwrap_err();
+        let mut buffer = vec![0; PodMint::SIZE_OF + 2];
+        let err =
+            PodStateWithExtensionsMut::<PodMint>::unpack_uninitialized(&mut buffer).unwrap_err();
         assert_eq!(err, ProgramError::InvalidAccountData);
 
         // OK since there are two bytes for the type, which is `Uninitialized`
         let mut buffer = vec![0; BASE_ACCOUNT_LENGTH + 3];
-        let mut state = StateWithExtensionsMut::<Mint>::unpack_uninitialized(&mut buffer).unwrap();
+        let mut state =
+            PodStateWithExtensionsMut::<PodMint>::unpack_uninitialized(&mut buffer).unwrap();
         let err = state.get_extension_mut::<MintCloseAuthority>().unwrap_err();
         assert_eq!(err, ProgramError::InvalidAccountData);
 
@@ -2219,20 +2371,21 @@ mod test {
 
         // OK, there aren't two bytes for the type, but that's fine
         let mut buffer = vec![0; BASE_ACCOUNT_LENGTH + 2];
-        let state = StateWithExtensionsMut::<Mint>::unpack_uninitialized(&mut buffer).unwrap();
+        let state =
+            PodStateWithExtensionsMut::<PodMint>::unpack_uninitialized(&mut buffer).unwrap();
         assert_eq!(state.get_extension_types().unwrap(), []);
     }
 
     #[test]
     fn test_extension_with_no_data() {
-        let account_size =
-            ExtensionType::try_calculate_account_len::<Account>(&[ExtensionType::ImmutableOwner])
-                .unwrap();
+        let account_size = ExtensionType::try_calculate_account_len::<PodAccount>(&[
+            ExtensionType::ImmutableOwner,
+        ])
+        .unwrap();
         let mut buffer = vec![0; account_size];
         let mut state =
-            StateWithExtensionsMut::<Account>::unpack_uninitialized(&mut buffer).unwrap();
-        state.base = TEST_ACCOUNT;
-        state.pack_base();
+            PodStateWithExtensionsMut::<PodAccount>::unpack_uninitialized(&mut buffer).unwrap();
+        *state.base = TEST_POD_ACCOUNT;
         state.init_account_type().unwrap();
 
         let err = state.get_extension::<ImmutableOwner>().unwrap_err();
@@ -2258,7 +2411,7 @@ mod test {
     #[test]
     fn fail_account_len_with_metadata() {
         assert_eq!(
-            ExtensionType::try_calculate_account_len::<Mint>(&[
+            ExtensionType::try_calculate_account_len::<PodMint>(&[
                 ExtensionType::MintCloseAuthority,
                 ExtensionType::VariableLenMintTest,
                 ExtensionType::TransferFeeConfig,
@@ -2275,7 +2428,8 @@ mod test {
         let account_size =
             BASE_ACCOUNT_LENGTH + size_of::<AccountType>() + add_type_and_length_to_len(alloc_size);
         let mut buffer = vec![0; account_size];
-        let mut state = StateWithExtensionsMut::<Mint>::unpack_uninitialized(&mut buffer).unwrap();
+        let mut state =
+            PodStateWithExtensionsMut::<PodMint>::unpack_uninitialized(&mut buffer).unwrap();
         state
             .init_variable_len_extension(&variable_len, false)
             .unwrap();
@@ -2325,11 +2479,12 @@ mod test {
             data: vec![1, 2, 3, 4, 5, 6],
         };
         let account_size =
-            ExtensionType::try_calculate_account_len::<Mint>(&[ExtensionType::MetadataPointer])
+            ExtensionType::try_calculate_account_len::<PodMint>(&[ExtensionType::MetadataPointer])
                 .unwrap()
                 + add_type_and_length_to_len(big_variable_len.get_packed_len().unwrap());
         let mut buffer = vec![0; account_size];
-        let mut state = StateWithExtensionsMut::<Mint>::unpack_uninitialized(&mut buffer).unwrap();
+        let mut state =
+            PodStateWithExtensionsMut::<PodMint>::unpack_uninitialized(&mut buffer).unwrap();
 
         // alloc both types
         state
@@ -2369,7 +2524,8 @@ mod test {
         assert_eq!(&buffer[account_size - diff..account_size], vec![0; diff]);
 
         // unpack again since we dropped the last `state`
-        let mut state = StateWithExtensionsMut::<Mint>::unpack_uninitialized(&mut buffer).unwrap();
+        let mut state =
+            PodStateWithExtensionsMut::<PodMint>::unpack_uninitialized(&mut buffer).unwrap();
         // realloc too much, fails
         assert_eq!(
             state
@@ -2394,12 +2550,13 @@ mod test {
         let account_size =
             BASE_ACCOUNT_LENGTH + size_of::<AccountType>() + add_type_and_length_to_len(value_len);
         let mut buffer = vec![0; account_size];
-        let mut state = StateWithExtensionsMut::<Mint>::unpack_uninitialized(&mut buffer).unwrap();
+        let mut state =
+            PodStateWithExtensionsMut::<PodMint>::unpack_uninitialized(&mut buffer).unwrap();
 
         // With a new extension, new length must include padding, 1 byte for
         // account type, 2 bytes for type, 2 for length
         let current_len = state.try_get_account_len().unwrap();
-        assert_eq!(current_len, Mint::LEN);
+        assert_eq!(current_len, PodMint::SIZE_OF);
         let new_len = state
             .try_get_new_account_len_for_variable_len_extension::<VariableLenMintTest>(
                 &variable_len,
@@ -2501,20 +2658,20 @@ mod test {
             data: [1, 2, 3, 4, 5, 6, 7, 8],
         };
         let value_len = pod_get_packed_len::<FixedLenMintTest>();
-        let base_account_size = Mint::LEN;
+        let base_account_size = PodMint::SIZE_OF;
         let mut buffer = vec![0; base_account_size];
-        let mut state = StateWithExtensionsMut::<Mint>::unpack_uninitialized(&mut buffer).unwrap();
-        state.base = TEST_MINT;
-        state.pack_base();
+        let state =
+            PodStateWithExtensionsMut::<PodMint>::unpack_uninitialized(&mut buffer).unwrap();
+        *state.base = TEST_POD_MINT;
 
         let mut data = SolanaAccountData::new(&buffer);
         let key = Pubkey::new_unique();
         let account_info = (&key, &mut data).into_account_info();
 
-        alloc_and_serialize::<Mint, _>(&account_info, &fixed_len, false).unwrap();
+        alloc_and_serialize::<PodMint, _>(&account_info, &fixed_len, false).unwrap();
         let new_account_len = BASE_ACCOUNT_AND_TYPE_LENGTH + add_type_and_length_to_len(value_len);
         assert_eq!(data.len(), new_account_len);
-        let state = StateWithExtensions::<Mint>::unpack(data.data()).unwrap();
+        let state = PodStateWithExtensions::<PodMint>::unpack(data.data()).unwrap();
         assert_eq!(
             state.get_extension::<FixedLenMintTest>().unwrap(),
             &fixed_len,
@@ -2522,12 +2679,12 @@ mod test {
 
         // alloc again succeeds with "overwrite"
         let account_info = (&key, &mut data).into_account_info();
-        alloc_and_serialize::<Mint, _>(&account_info, &fixed_len, true).unwrap();
+        alloc_and_serialize::<PodMint, _>(&account_info, &fixed_len, true).unwrap();
 
         // alloc again fails without "overwrite"
         let account_info = (&key, &mut data).into_account_info();
         assert_eq!(
-            alloc_and_serialize::<Mint, _>(&account_info, &fixed_len, false).unwrap_err(),
+            alloc_and_serialize::<PodMint, _>(&account_info, &fixed_len, false).unwrap_err(),
             TokenError::ExtensionAlreadyInitialized.into()
         );
     }
@@ -2536,21 +2693,25 @@ mod test {
     fn alloc_new_variable_len_tlv_in_account_info_from_base_size() {
         let variable_len = VariableLenMintTest { data: vec![20, 99] };
         let value_len = variable_len.get_packed_len().unwrap();
-        let base_account_size = Mint::LEN;
+        let base_account_size = PodMint::SIZE_OF;
         let mut buffer = vec![0; base_account_size];
-        let mut state = StateWithExtensionsMut::<Mint>::unpack_uninitialized(&mut buffer).unwrap();
-        state.base = TEST_MINT;
-        state.pack_base();
+        let state =
+            PodStateWithExtensionsMut::<PodMint>::unpack_uninitialized(&mut buffer).unwrap();
+        *state.base = TEST_POD_MINT;
 
         let mut data = SolanaAccountData::new(&buffer);
         let key = Pubkey::new_unique();
         let account_info = (&key, &mut data).into_account_info();
 
-        alloc_and_serialize_variable_len_extension::<Mint, _>(&account_info, &variable_len, false)
-            .unwrap();
+        alloc_and_serialize_variable_len_extension::<PodMint, _>(
+            &account_info,
+            &variable_len,
+            false,
+        )
+        .unwrap();
         let new_account_len = BASE_ACCOUNT_AND_TYPE_LENGTH + add_type_and_length_to_len(value_len);
         assert_eq!(data.len(), new_account_len);
-        let state = StateWithExtensions::<Mint>::unpack(data.data()).unwrap();
+        let state = PodStateWithExtensions::<PodMint>::unpack(data.data()).unwrap();
         assert_eq!(
             state
                 .get_variable_len_extension::<VariableLenMintTest>()
@@ -2560,13 +2721,17 @@ mod test {
 
         // alloc again succeeds with "overwrite"
         let account_info = (&key, &mut data).into_account_info();
-        alloc_and_serialize_variable_len_extension::<Mint, _>(&account_info, &variable_len, true)
-            .unwrap();
+        alloc_and_serialize_variable_len_extension::<PodMint, _>(
+            &account_info,
+            &variable_len,
+            true,
+        )
+        .unwrap();
 
         // alloc again fails without "overwrite"
         let account_info = (&key, &mut data).into_account_info();
         assert_eq!(
-            alloc_and_serialize_variable_len_extension::<Mint, _>(
+            alloc_and_serialize_variable_len_extension::<PodMint, _>(
                 &account_info,
                 &variable_len,
                 false,
@@ -2583,13 +2748,13 @@ mod test {
         };
         let value_len = pod_get_packed_len::<FixedLenMintTest>();
         let account_size =
-            ExtensionType::try_calculate_account_len::<Mint>(&[ExtensionType::GroupPointer])
+            ExtensionType::try_calculate_account_len::<PodMint>(&[ExtensionType::GroupPointer])
                 .unwrap()
                 + add_type_and_length_to_len(value_len);
         let mut buffer = vec![0; account_size];
-        let mut state = StateWithExtensionsMut::<Mint>::unpack_uninitialized(&mut buffer).unwrap();
-        state.base = TEST_MINT;
-        state.pack_base();
+        let mut state =
+            PodStateWithExtensionsMut::<PodMint>::unpack_uninitialized(&mut buffer).unwrap();
+        *state.base = TEST_POD_MINT;
         state.init_account_type().unwrap();
 
         let test_key =
@@ -2602,12 +2767,12 @@ mod test {
         let key = Pubkey::new_unique();
         let account_info = (&key, &mut data).into_account_info();
 
-        alloc_and_serialize::<Mint, _>(&account_info, &fixed_len, false).unwrap();
+        alloc_and_serialize::<PodMint, _>(&account_info, &fixed_len, false).unwrap();
         let new_account_len = BASE_ACCOUNT_AND_TYPE_LENGTH
             + add_type_and_length_to_len(value_len)
             + add_type_and_length_to_len(size_of::<GroupPointer>());
         assert_eq!(data.len(), new_account_len);
-        let state = StateWithExtensions::<Mint>::unpack(data.data()).unwrap();
+        let state = PodStateWithExtensions::<PodMint>::unpack(data.data()).unwrap();
         assert_eq!(
             state.get_extension::<FixedLenMintTest>().unwrap(),
             &fixed_len,
@@ -2618,12 +2783,12 @@ mod test {
 
         // alloc again succeeds with "overwrite"
         let account_info = (&key, &mut data).into_account_info();
-        alloc_and_serialize::<Mint, _>(&account_info, &fixed_len, true).unwrap();
+        alloc_and_serialize::<PodMint, _>(&account_info, &fixed_len, true).unwrap();
 
         // alloc again fails without "overwrite"
         let account_info = (&key, &mut data).into_account_info();
         assert_eq!(
-            alloc_and_serialize::<Mint, _>(&account_info, &fixed_len, false).unwrap_err(),
+            alloc_and_serialize::<PodMint, _>(&account_info, &fixed_len, false).unwrap_err(),
             TokenError::ExtensionAlreadyInitialized.into()
         );
     }
@@ -2633,13 +2798,13 @@ mod test {
         let variable_len = VariableLenMintTest { data: vec![42, 6] };
         let value_len = variable_len.get_packed_len().unwrap();
         let account_size =
-            ExtensionType::try_calculate_account_len::<Mint>(&[ExtensionType::MetadataPointer])
+            ExtensionType::try_calculate_account_len::<PodMint>(&[ExtensionType::MetadataPointer])
                 .unwrap()
                 + add_type_and_length_to_len(value_len);
         let mut buffer = vec![0; account_size];
-        let mut state = StateWithExtensionsMut::<Mint>::unpack_uninitialized(&mut buffer).unwrap();
-        state.base = TEST_MINT;
-        state.pack_base();
+        let mut state =
+            PodStateWithExtensionsMut::<PodMint>::unpack_uninitialized(&mut buffer).unwrap();
+        *state.base = TEST_POD_MINT;
         state.init_account_type().unwrap();
 
         let test_key =
@@ -2652,13 +2817,17 @@ mod test {
         let key = Pubkey::new_unique();
         let account_info = (&key, &mut data).into_account_info();
 
-        alloc_and_serialize_variable_len_extension::<Mint, _>(&account_info, &variable_len, false)
-            .unwrap();
+        alloc_and_serialize_variable_len_extension::<PodMint, _>(
+            &account_info,
+            &variable_len,
+            false,
+        )
+        .unwrap();
         let new_account_len = BASE_ACCOUNT_AND_TYPE_LENGTH
             + add_type_and_length_to_len(value_len)
             + add_type_and_length_to_len(size_of::<MetadataPointer>());
         assert_eq!(data.len(), new_account_len);
-        let state = StateWithExtensions::<Mint>::unpack(data.data()).unwrap();
+        let state = PodStateWithExtensions::<PodMint>::unpack(data.data()).unwrap();
         assert_eq!(
             state
                 .get_variable_len_extension::<VariableLenMintTest>()
@@ -2671,13 +2840,17 @@ mod test {
 
         // alloc again succeeds with "overwrite"
         let account_info = (&key, &mut data).into_account_info();
-        alloc_and_serialize_variable_len_extension::<Mint, _>(&account_info, &variable_len, true)
-            .unwrap();
+        alloc_and_serialize_variable_len_extension::<PodMint, _>(
+            &account_info,
+            &variable_len,
+            true,
+        )
+        .unwrap();
 
         // alloc again fails without "overwrite"
         let account_info = (&key, &mut data).into_account_info();
         assert_eq!(
-            alloc_and_serialize_variable_len_extension::<Mint, _>(
+            alloc_and_serialize_variable_len_extension::<PodMint, _>(
                 &account_info,
                 &variable_len,
                 false,
@@ -2694,13 +2867,13 @@ mod test {
         };
         let alloc_size = variable_len.get_packed_len().unwrap();
         let account_size =
-            ExtensionType::try_calculate_account_len::<Mint>(&[ExtensionType::MetadataPointer])
+            ExtensionType::try_calculate_account_len::<PodMint>(&[ExtensionType::MetadataPointer])
                 .unwrap()
                 + add_type_and_length_to_len(alloc_size);
         let mut buffer = vec![0; account_size];
-        let mut state = StateWithExtensionsMut::<Mint>::unpack_uninitialized(&mut buffer).unwrap();
-        state.base = TEST_MINT;
-        state.pack_base();
+        let mut state =
+            PodStateWithExtensionsMut::<PodMint>::unpack_uninitialized(&mut buffer).unwrap();
+        *state.base = TEST_POD_MINT;
         state.init_account_type().unwrap();
 
         // alloc both types
@@ -2718,10 +2891,14 @@ mod test {
         let key = Pubkey::new_unique();
         let account_info = (&key, &mut data).into_account_info();
         let variable_len = VariableLenMintTest { data: vec![1, 2] };
-        alloc_and_serialize_variable_len_extension::<Mint, _>(&account_info, &variable_len, true)
-            .unwrap();
+        alloc_and_serialize_variable_len_extension::<PodMint, _>(
+            &account_info,
+            &variable_len,
+            true,
+        )
+        .unwrap();
 
-        let state = StateWithExtensions::<Mint>::unpack(data.data()).unwrap();
+        let state = PodStateWithExtensions::<PodMint>::unpack(data.data()).unwrap();
         let extension = state.get_extension::<MetadataPointer>().unwrap();
         assert_eq!(extension.authority, max_pubkey);
         assert_eq!(extension.metadata_address, max_pubkey);
@@ -2736,10 +2913,14 @@ mod test {
         let variable_len = VariableLenMintTest {
             data: vec![1, 2, 3, 4, 5, 6, 7],
         };
-        alloc_and_serialize_variable_len_extension::<Mint, _>(&account_info, &variable_len, true)
-            .unwrap();
+        alloc_and_serialize_variable_len_extension::<PodMint, _>(
+            &account_info,
+            &variable_len,
+            true,
+        )
+        .unwrap();
 
-        let state = StateWithExtensions::<Mint>::unpack(data.data()).unwrap();
+        let state = PodStateWithExtensions::<PodMint>::unpack(data.data()).unwrap();
         let extension = state.get_extension::<MetadataPointer>().unwrap();
         assert_eq!(extension.authority, max_pubkey);
         assert_eq!(extension.metadata_address, max_pubkey);
@@ -2754,10 +2935,14 @@ mod test {
         let variable_len = VariableLenMintTest {
             data: vec![7, 6, 5, 4, 3, 2, 1],
         };
-        alloc_and_serialize_variable_len_extension::<Mint, _>(&account_info, &variable_len, true)
-            .unwrap();
+        alloc_and_serialize_variable_len_extension::<PodMint, _>(
+            &account_info,
+            &variable_len,
+            true,
+        )
+        .unwrap();
 
-        let state = StateWithExtensions::<Mint>::unpack(data.data()).unwrap();
+        let state = PodStateWithExtensions::<PodMint>::unpack(data.data()).unwrap();
         let extension = state.get_extension::<MetadataPointer>().unwrap();
         assert_eq!(extension.authority, max_pubkey);
         assert_eq!(extension.metadata_address, max_pubkey);

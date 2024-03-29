@@ -22,7 +22,7 @@ const TRANSFER_AMOUNT: u64 = 1_000_000_000_000_000;
 #[tokio::test]
 async fn initialize_mint() {
     let mut pt = ProgramTest::new("spl_token_2022", id(), processor!(Processor::process));
-    pt.set_compute_max_units(5_000); // last known 2252
+    pt.set_compute_max_units(5_000); // last known 1378
     let (mut banks_client, payer, recent_blockhash) = pt.start().await;
 
     let owner_key = Pubkey::new_unique();
@@ -60,7 +60,7 @@ async fn initialize_mint() {
 #[tokio::test]
 async fn initialize_account() {
     let mut pt = ProgramTest::new("spl_token_2022", id(), processor!(Processor::process));
-    pt.set_compute_max_units(8_000); // last known 7064
+    pt.set_compute_max_units(8_000); // last known 1783
     let (mut banks_client, payer, recent_blockhash) = pt.start().await;
 
     let owner = Keypair::new();
@@ -112,7 +112,7 @@ async fn initialize_account() {
 #[tokio::test]
 async fn mint_to() {
     let mut pt = ProgramTest::new("spl_token_2022", id(), processor!(Processor::process));
-    pt.set_compute_max_units(8_000); // last known 7033
+    pt.set_compute_max_units(8_000); // last known 1115
     let (mut banks_client, payer, recent_blockhash) = pt.start().await;
 
     let owner = Keypair::new();
@@ -161,7 +161,7 @@ async fn mint_to() {
 #[tokio::test]
 async fn transfer() {
     let mut pt = ProgramTest::new("spl_token_2022", id(), processor!(Processor::process));
-    pt.set_compute_max_units(8_000); // last known 7033
+    pt.set_compute_max_units(8_000); // last known 1502
     let (mut banks_client, payer, recent_blockhash) = pt.start().await;
 
     let owner = Keypair::new();
@@ -227,9 +227,79 @@ async fn transfer() {
 }
 
 #[tokio::test]
+async fn transfer_checked() {
+    let mut pt = ProgramTest::new("spl_token_2022", id(), processor!(Processor::process));
+    pt.set_compute_max_units(8_000); // last known 1849
+    let (mut banks_client, payer, recent_blockhash) = pt.start().await;
+
+    let owner = Keypair::new();
+    let mint = Keypair::new();
+    let source = Keypair::new();
+    let destination = Keypair::new();
+    let decimals = 9;
+
+    action::create_mint(
+        &mut banks_client,
+        &payer,
+        recent_blockhash,
+        &mint,
+        &owner.pubkey(),
+        decimals,
+    )
+    .await
+    .unwrap();
+    action::create_account(
+        &mut banks_client,
+        &payer,
+        recent_blockhash,
+        &source,
+        &mint.pubkey(),
+        &owner.pubkey(),
+    )
+    .await
+    .unwrap();
+    action::create_account(
+        &mut banks_client,
+        &payer,
+        recent_blockhash,
+        &destination,
+        &mint.pubkey(),
+        &owner.pubkey(),
+    )
+    .await
+    .unwrap();
+
+    action::mint_to(
+        &mut banks_client,
+        &payer,
+        recent_blockhash,
+        &mint.pubkey(),
+        &source.pubkey(),
+        &owner,
+        TRANSFER_AMOUNT,
+    )
+    .await
+    .unwrap();
+
+    action::transfer_checked(
+        &mut banks_client,
+        &payer,
+        recent_blockhash,
+        &source.pubkey(),
+        &mint.pubkey(),
+        &destination.pubkey(),
+        &owner,
+        TRANSFER_AMOUNT,
+        decimals,
+    )
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
 async fn burn() {
     let mut pt = ProgramTest::new("spl_token_2022", id(), processor!(Processor::process));
-    pt.set_compute_max_units(8_000); // last known 7042
+    pt.set_compute_max_units(8_000); // last known 1226
     let (mut banks_client, payer, recent_blockhash) = pt.start().await;
 
     let owner = Keypair::new();
@@ -286,7 +356,7 @@ async fn burn() {
 #[tokio::test]
 async fn close_account() {
     let mut pt = ProgramTest::new("spl_token_2022", id(), processor!(Processor::process));
-    pt.set_compute_max_units(8_000); // last known 1783
+    pt.set_compute_max_units(8_000); // last known 1315
     let (mut banks_client, payer, recent_blockhash) = pt.start().await;
 
     let owner = Keypair::new();

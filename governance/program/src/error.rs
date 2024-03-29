@@ -128,9 +128,9 @@ pub enum GovernanceError {
     #[error("Invalid Transaction index")]
     InvalidTransactionIndex, // 527
 
-    /// Transaction hold up time is below the min specified by Governance
-    #[error("Transaction hold up time is below the min specified by Governance")]
-    TransactionHoldUpTimeBelowRequiredMin, // 528
+    /// Legacy TransactionHoldUpTimeBelowRequiredMin
+    #[error("Legacy3")]
+    Legacy3, // 528
 
     /// Transaction at the given index for the Proposal already exists
     #[error("Transaction at the given index for the Proposal already exists")]
@@ -269,9 +269,9 @@ pub enum GovernanceError {
     #[error("Governance PDA must sign")]
     GovernancePdaMustSign, // 561
 
-    /// Transaction already flagged with error
-    #[error("Transaction already flagged with error")]
-    TransactionAlreadyFlaggedWithError, // 562
+    /// Previously TransactionAlreadyFlaggedWithError
+    #[error("Legacy2")]
+    Legacy2, // 562
 
     /// Invalid Realm for Governance
     #[error("Invalid Realm for Governance")]
@@ -507,19 +507,47 @@ pub enum GovernanceError {
 
     /// Invalid Governance for RequiredSignatory
     #[error("Invalid Governance for RequiredSignatory")]
-    InvalidGovernanceForRequiredSignatory,
+    InvalidGovernanceForRequiredSignatory, // 621
 
     /// SignatoryRecord already exists
     #[error("Signatory Record has already been created")]
-    SignatoryRecordAlreadyExists,
+    SignatoryRecordAlreadyExists, // 622
 
     /// Instruction has been removed
     #[error("Instruction has been removed")]
-    InstructionDeprecated,
+    InstructionDeprecated, // 623
 
     /// Proposal is missing signatories required by its governance
     #[error("Proposal is missing required signatories")]
-    MissingRequiredSignatories,
+    MissingRequiredSignatories, // 624
+
+    /// TokenOwnerRecordLock authority must sign
+    #[error("TokenOwnerRecordLock authority must sign")]
+    TokenOwnerRecordLockAuthorityMustSign, // 625
+
+    /// TokenOwnerRecordLock is expired
+    #[error("TokenOwnerRecordLock is expired ")]
+    ExpiredTokenOwnerRecordLock, // 626
+
+    /// TokenOwnerRecord locked
+    #[error("TokenOwnerRecord locked")]
+    TokenOwnerRecordLocked, // 627
+
+    /// Invalid TokenOwnerRecordLockAuthority
+    #[error("Invalid TokenOwnerRecordLockAuthority")]
+    InvalidTokenOwnerRecordLockAuthority, // 628
+
+    /// TokenOwnerRecordLock authority already exists
+    #[error("TokenOwnerRecordLock authority already exists")]
+    TokenOwnerRecordLockAuthorityAlreadyExists, // 629
+
+    /// TokenOwnerRecordLock not found
+    #[error("TokenOwnerRecordLock not found")]
+    TokenOwnerRecordLockNotFound, // 630
+
+    /// TokenOwnerRecordLockAuthority not found
+    #[error("TokenOwnerRecordLockAuthority not found")]
+    TokenOwnerRecordLockAuthorityNotFound, // 631
 }
 
 impl PrintProgramError for GovernanceError {

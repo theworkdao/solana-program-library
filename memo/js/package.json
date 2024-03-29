@@ -46,19 +46,19 @@
         "deploy:docs": "npm run docs && gh-pages --dest memo/js --dist docs --dotfiles"
     },
     "peerDependencies": {
-        "@solana/web3.js": "^1.90.0"
+        "@solana/web3.js": "^1.91.1"
     },
     "dependencies": {
         "buffer": "^6.0.3"
     },
     "devDependencies": {
-        "@solana/web3.js": "^1.90.0",
-        "@types/chai": "^4.3.12",
+        "@solana/web3.js": "^1.91.1",
+        "@types/chai": "^4.3.14",
         "@types/jest": "^29.5.12",
-        "@types/node": "^20.11.20",
+        "@types/node": "^20.11.30",
         "@types/node-fetch": "^2.6.11",
-        "@typescript-eslint/eslint-plugin": "^7.0.2",
-        "@typescript-eslint/parser": "^7.0.2",
+        "@typescript-eslint/eslint-plugin": "^7.4.0",
+        "@typescript-eslint/parser": "^7.4.0",
         "chai": "^5.1.0",
         "eslint": "^8.57.0",
         "eslint-config-prettier": "^9.1.0",
@@ -72,7 +72,7 @@
         "start-server-and-test": "^2.0.3",
         "ts-jest": "^29.1.2",
         "ts-node": "^10.9.2",
-        "typedoc": "^0.25.9",
-        "typescript": "^5.3.3"
+        "typedoc": "^0.25.12",
+        "typescript": "^5.4.3"
     }
 }

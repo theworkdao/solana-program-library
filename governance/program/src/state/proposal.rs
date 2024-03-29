@@ -10,7 +10,7 @@ use {
         state::{
             enums::{
                 GovernanceAccountType, InstructionExecutionFlags, MintMaxVoterWeightSource,
-                ProposalState, TransactionExecutionStatus, VoteThreshold, VoteTipping,
+                ProposalState, VoteThreshold, VoteTipping,
             },
             governance::GovernanceConfig,
             legacy::ProposalV1,
@@ -22,7 +22,7 @@ use {
         tools::spl_token::get_spl_token_mint_supply,
         PROGRAM_AUTHORITY_SEED,
     },
-    borsh::{maybestd::io::Write, BorshDeserialize, BorshSchema, BorshSerialize},
+    borsh::{io::Write, BorshDeserialize, BorshSchema, BorshSerialize},
     solana_program::{
         account_info::{next_account_info, AccountInfo},
         clock::{Slot, UnixTimestamp},
@@ -65,7 +65,7 @@ pub struct ProposalOption {
     /// The number of transactions included in the option
     pub transactions_count: u16,
 
-    /// The index of the the next transaction to be added
+    /// The index of the next transaction to be added
     pub transactions_next_index: u16,
 }
 
@@ -840,6 +840,7 @@ impl ProposalV2 {
     pub fn assert_can_execute_transaction(
         &self,
         proposal_transaction_data: &ProposalTransactionV2,
+        governance_config: &GovernanceConfig,
         current_unix_timestamp: UnixTimestamp,
     ) -> Result<(), ProgramError> {
         match self.state {
@@ -866,7 +867,7 @@ impl ProposalV2 {
         if self
             .voting_completed_at
             .unwrap()
-            .checked_add(proposal_transaction_data.hold_up_time as i64)
+            .checked_add(governance_config.transactions_hold_up_time as i64)
             .unwrap()
             >= current_unix_timestamp
         {
@@ -875,23 +876,6 @@ impl ProposalV2 {
 
         if proposal_transaction_data.executed_at.is_some() {
             return Err(GovernanceError::TransactionAlreadyExecuted.into());
-        }
-
-        Ok(())
-    }
-
-    /// Checks if the instruction can be flagged with error for the Proposal in
-    /// the given state
-    pub fn assert_can_flag_transaction_error(
-        &self,
-        proposal_transaction_data: &ProposalTransactionV2,
-        current_unix_timestamp: UnixTimestamp,
-    ) -> Result<(), ProgramError> {
-        // Instruction can be flagged for error only when it's eligible for execution
-        self.assert_can_execute_transaction(proposal_transaction_data, current_unix_timestamp)?;
-
-        if proposal_transaction_data.execution_status == TransactionExecutionStatus::Error {
-            return Err(GovernanceError::TransactionAlreadyFlaggedWithError.into());
         }
 
         Ok(())
@@ -1372,7 +1356,7 @@ mod test {
         GovernanceConfig {
             community_vote_threshold: VoteThreshold::YesVotePercentage(60),
             min_community_weight_to_create_proposal: 5,
-            min_transaction_hold_up_time: 10,
+            transactions_hold_up_time: 10,
             voting_base_time: 5,
             community_vote_tipping: VoteTipping::Strict,
             council_vote_threshold: VoteThreshold::YesVotePercentage(60),
@@ -1395,7 +1379,7 @@ mod test {
             max_winning_options: 1,
         };
 
-        let size = proposal.try_to_vec().unwrap().len();
+        let size = borsh::to_vec(&proposal).unwrap().len();
 
         assert_eq!(proposal.get_max_size(), Some(size));
     }
@@ -1410,7 +1394,7 @@ mod test {
             max_winning_options: 3,
         };
 
-        let size = proposal.try_to_vec().unwrap().len();
+        let size = borsh::to_vec(&proposal).unwrap().len();
 
         assert_eq!(proposal.get_max_size(), Some(size));
     }

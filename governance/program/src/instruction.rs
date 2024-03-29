@@ -1,34 +1,28 @@
 //! Program instructions
 
 use {
-    crate::{
-        state::{
-            enums::MintMaxVoterWeightSource,
-            governance::{
-                get_governance_address, get_mint_governance_address,
-                get_program_governance_address, get_token_governance_address, GovernanceConfig,
-            },
-            native_treasury::get_native_treasury_address,
-            program_metadata::get_program_metadata_address,
-            proposal::{get_proposal_address, VoteType},
-            proposal_deposit::get_proposal_deposit_address,
-            proposal_transaction::{get_proposal_transaction_address, InstructionData},
-            realm::{
-                get_governing_token_holding_address, get_realm_address,
-                GoverningTokenConfigAccountArgs, GoverningTokenConfigArgs, RealmConfigArgs,
-                SetRealmAuthorityAction,
-            },
-            realm_config::get_realm_config_address,
-            required_signatory::get_required_signatory_address,
-            signatory_record::get_signatory_record_address,
-            token_owner_record::get_token_owner_record_address,
-            vote_record::{get_vote_record_address, Vote},
+    crate::state::{
+        enums::MintMaxVoterWeightSource,
+        governance::{get_governance_address, GovernanceConfig},
+        native_treasury::get_native_treasury_address,
+        program_metadata::get_program_metadata_address,
+        proposal::{get_proposal_address, VoteType},
+        proposal_deposit::get_proposal_deposit_address,
+        proposal_transaction::{get_proposal_transaction_address, InstructionData},
+        realm::{
+            get_governing_token_holding_address, get_realm_address,
+            GoverningTokenConfigAccountArgs, GoverningTokenConfigArgs, RealmConfigArgs,
+            SetRealmAuthorityAction, SetRealmConfigItemArgs,
         },
-        tools::bpf_loader_upgradeable::get_program_data_address,
+        realm_config::get_realm_config_address,
+        required_signatory::get_required_signatory_address,
+        signatory_record::get_signatory_record_address,
+        token_owner_record::get_token_owner_record_address,
+        vote_record::{get_vote_record_address, Vote},
     },
     borsh::{BorshDeserialize, BorshSchema, BorshSerialize},
     solana_program::{
-        bpf_loader_upgradeable,
+        clock::UnixTimestamp,
         instruction::{AccountMeta, Instruction},
         pubkey::Pubkey,
         system_program, sysvar,
@@ -233,11 +227,9 @@ pub enum GovernanceInstruction {
     /// Solana account or asset
     ///
     ///   0. `[]` Realm account the created Governance belongs to
-    ///   1. `[writable]` Account Governance account.
-    ///     * PDA seeds: ['account-governance', realm, governed_account]
-    ///   2. `[]` Account governed by this Governance Note: The account doesn't
-    ///      have to exist and can be only used as a unique identifier for the
-    ///      Governance account
+    ///   1. `[writable]` Governance account
+    ///     * PDA seeds: ['account-governance', realm, governance_seed]
+    ///   2. `[]` Governance account PDA seed
     ///   3. `[]` Governing TokenOwnerRecord account (Used only if not signed by
     ///      RealmAuthority)
     ///   4. `[signer]` Payer
@@ -252,37 +244,9 @@ pub enum GovernanceInstruction {
         config: GovernanceConfig,
     },
 
-    /// Creates Program Governance account which governs an upgradable program
-    ///
-    ///   0. `[]` Realm account the created Governance belongs to
-    ///   1. `[writable]` Program Governance account.
-    ///     * PDA seeds: ['program-governance', realm, governed_program]
-    ///   2. `[]` Program governed by this Governance account
-    ///   3. `[writable]` Program Data account of the Program governed by this
-    ///      Governance account
-    ///   4. `[signer]` Current Upgrade Authority account of the Program
-    ///      governed by this Governance account
-    ///   5. `[]` Governing TokenOwnerRecord account (Used only if not signed by
-    ///      RealmAuthority)
-    ///   6. `[signer]` Payer
-    ///   7. `[]` bpf_upgradeable_loader program
-    ///   8. `[]` System program
-    ///   9. `[signer]` Governance authority
-    ///   10. `[]` RealmConfig account.
-    ///     * PDA seeds: ['realm-config', realm]
-    ///   11. `[]` Optional Voter Weight Record
-    CreateProgramGovernance {
-        /// Governance config
-        #[allow(dead_code)]
-        config: GovernanceConfig,
-
-        #[allow(dead_code)]
-        /// Indicates whether Program's upgrade_authority should be transferred
-        /// to the Governance PDA If it's set to false then it can be
-        /// done at a later time However the instruction would validate
-        /// the current upgrade_authority signed the transaction nonetheless
-        transfer_upgrade_authority: bool,
-    },
+    /// Legacy CreateProgramGovernance instruction
+    /// Exists for backwards-compatibility
+    Legacy4,
 
     /// Creates Proposal account for Transactions which will be executed at some
     /// point in the future
@@ -384,9 +348,8 @@ pub enum GovernanceInstruction {
         /// Transaction index to be inserted at.
         index: u16,
         #[allow(dead_code)]
-        /// Waiting time (in seconds) between vote period ending and this being
-        /// eligible for execution
-        hold_up_time: u32,
+        /// Legacy hold_up_time
+        legacy: u32,
 
         #[allow(dead_code)]
         /// Instructions Data
@@ -518,67 +481,13 @@ pub enum GovernanceInstruction {
     ///   3+ Any extra accounts that are part of the transaction, in order
     ExecuteTransaction,
 
-    /// Creates Mint Governance account which governs a mint
-    ///
-    ///   0. `[]` Realm account the created Governance belongs to
-    ///   1. `[writable]` Mint Governance account.
-    ///     * PDA seeds: ['mint-governance', realm, governed_mint]
-    ///   2. `[writable]` Mint governed by this Governance account
-    ///   3. `[signer]` Current Mint authority (MintTokens and optionally
-    ///      FreezeAccount)
-    ///   4. `[]` Governing TokenOwnerRecord account (Used only if not signed by
-    ///      RealmAuthority)
-    ///   5. `[signer]` Payer
-    ///   6. `[]` SPL Token program
-    ///   7. `[]` System program
-    ///   8. `[signer]` Governance authority
-    ///   9. `[]` RealmConfig account.
-    ///     * PDA seeds: ['realm-config', realm]
-    ///   10. `[]` Optional Voter Weight Record
-    CreateMintGovernance {
-        #[allow(dead_code)]
-        /// Governance config
-        config: GovernanceConfig,
+    /// Legacy CreateMintGovernance instruction
+    /// Exists for backwards-compatibility
+    Legacy2,
 
-        #[allow(dead_code)]
-        /// Indicates whether Mint's authorities (MintTokens, FreezeAccount)
-        /// should be transferred to the Governance PDA. If it's set to
-        /// false then it can be done at a later time. However the
-        /// instruction would validate the current mint authority signed the
-        /// transaction nonetheless
-        transfer_mint_authorities: bool,
-    },
-
-    /// Creates Token Governance account which governs a token account
-    ///
-    ///   0. `[]` Realm account the created Governance belongs to
-    ///   1. `[writable]` Token Governance account.
-    ///     * PDA seeds: ['token-governance', realm, governed_token]
-    ///   2. `[writable]` Token account governed by this Governance account
-    ///   3. `[signer]` Current token account authority (AccountOwner and
-    ///      optionally CloseAccount)
-    ///   4. `[]` Governing TokenOwnerRecord account (Used only if not signed by
-    ///      RealmAuthority)
-    ///   5. `[signer]` Payer
-    ///   6. `[]` SPL Token program
-    ///   7. `[]` System program
-    ///   8. `[signer]` Governance authority
-    ///   9. `[]` RealmConfig account.
-    ///     * PDA seeds: ['realm-config', realm]
-    ///   10. `[]` Optional Voter Weight Record
-    CreateTokenGovernance {
-        #[allow(dead_code)]
-        /// Governance config
-        config: GovernanceConfig,
-
-        #[allow(dead_code)]
-        /// Indicates whether the token account authorities (AccountOwner and
-        /// optionally CloseAccount) should be transferred to the Governance PDA
-        /// If it's set to false then it can be done at a later time
-        /// However the instruction would validate the current token owner
-        /// signed the transaction nonetheless
-        transfer_account_authorities: bool,
-    },
+    /// Legacy CreateTokenGovernance instruction
+    /// Exists for backwards-compatibility
+    Legacy3,
 
     /// Sets GovernanceConfig for a Governance
     ///
@@ -590,19 +499,9 @@ pub enum GovernanceInstruction {
         config: GovernanceConfig,
     },
 
-    /// Flags a transaction and its parent Proposal with error status
-    /// It can be used by Proposal owner in case the transaction is permanently
-    /// broken and can't be executed.
-    /// Note: This instruction is a workaround because currently it's not
-    /// possible to catch errors from CPI calls and the Governance program has
-    /// no way to know when instruction failed and flag it automatically.
-    ///
-    ///   0. `[writable]` Proposal account
-    ///   1. `[]` TokenOwnerRecord account of the Proposal owner
-    ///   2. `[signer]` Governance Authority (Token Owner or Governance
-    ///      Delegate)
-    ///   3. `[writable]` ProposalTransaction account to flag
-    FlagTransactionError,
+    /// Legacy FlagTransactionError instruction
+    /// Exists for backwards-compatibility
+    Legacy5,
 
     /// Sets new Realm authority
     ///
@@ -777,6 +676,61 @@ pub enum GovernanceInstruction {
     ///  2. `[writable]` Beneficiary Account which would receive lamports from
     ///     the disposed RequiredSignatory Account
     RemoveRequiredSignatory,
+
+    /// Sets TokenOwnerRecord lock for the given authority and lock id
+    ///
+    ///   0. `[]` Realm
+    ///   1. `[]` RealmConfig
+    ///   2. `[writable]` TokenOwnerRecord the lock is set for
+    ///   3. `[signer]` Lock authority issuing the lock
+    ///   4. `[signer]` Payer
+    ///   5. `[]` System
+    SetTokenOwnerRecordLock {
+        /// Custom lock id which can be used by the authority to issue
+        /// different locks
+        #[allow(dead_code)]
+        lock_id: u8,
+
+        /// The timestamp when the lock expires or None if it never expires
+        #[allow(dead_code)]
+        expiry: Option<UnixTimestamp>,
+    },
+
+    /// Removes all expired TokenOwnerRecord locks and if specified
+    /// the locks identified by the given lock ids and authority
+    ///
+    ///
+    ///   0. `[]` Realm
+    ///   1. `[]` RealmConfig
+    ///   2. `[writable]` TokenOwnerRecord the locks are removed from
+    ///   3. `[signer]` Optional lock authority which issued the locks specified
+    ///      by lock_ids. If the authority is configured in RealmConfig then it
+    ///      must sign the transaction. If the authority is no longer configured
+    ///      then the locks are removed without the authority signature
+    RelinquishTokenOwnerRecordLocks {
+        /// Custom lock ids identifying the lock to remove
+        /// If the lock_id is None then only expired locks are removed
+        #[allow(dead_code)]
+        lock_ids: Option<Vec<u8>>,
+    },
+
+    /// Sets Realm config item
+    /// Note:
+    /// This instruction is used to set a single RealmConfig item at a time
+    /// In the current version it only supports TokenOwnerRecordLockAuthority
+    /// however eventually all Realm configuration items should be set using
+    /// this instruction and SetRealmConfig instruction should be deprecated
+    ///
+    ///   0. `[writable]` Realm account
+    ///   1. `[writable]` RealmConfig account
+    ///   2. `[signer]`  Realm authority
+    ///   3. `[signer]` Payer
+    ///   4. `[]` System
+    SetRealmConfigItem {
+        #[allow(dead_code)]
+        /// Config args
+        args: SetRealmConfigItemArgs,
+    },
 }
 
 /// Creates CreateRealm instruction
@@ -845,7 +799,7 @@ pub fn create_realm(
     Instruction {
         program_id: *program_id,
         accounts,
-        data: instruction.try_to_vec().unwrap(),
+        data: borsh::to_vec(&instruction).unwrap(),
     }
 }
 
@@ -962,7 +916,7 @@ pub fn deposit_governing_tokens(
     Instruction {
         program_id: *program_id,
         accounts,
-        data: instruction.try_to_vec().unwrap(),
+        data: borsh::to_vec(&instruction).unwrap(),
     }
 }
 
@@ -1051,7 +1005,7 @@ pub fn withdraw_governing_tokens(
     Instruction {
         program_id: *program_id,
         accounts,
-        data: instruction.try_to_vec().unwrap(),
+        data: borsh::to_vec(&instruction).unwrap(),
     }
 }
 
@@ -1126,7 +1080,7 @@ pub fn set_governance_delegate(
     Instruction {
         program_id: *program_id,
         accounts,
-        data: instruction.try_to_vec().unwrap(),
+        data: borsh::to_vec(&instruction).unwrap(),
     }
 }
 
@@ -1136,7 +1090,7 @@ pub fn create_governance(
     program_id: &Pubkey,
     // Accounts
     realm: &Pubkey,
-    governed_account: Option<&Pubkey>,
+    governance_seed: &Pubkey,
     token_owner_record: &Pubkey,
     payer: &Pubkey,
     create_authority: &Pubkey,
@@ -1144,20 +1098,12 @@ pub fn create_governance(
     // Args
     config: GovernanceConfig,
 ) -> Instruction {
-    let governed_account_address = if let Some(governed_account) = governed_account {
-        *governed_account
-    } else {
-        // If the governed account is not provided then generate a unique identifier for
-        // the Governance account
-        Pubkey::new_unique()
-    };
-
-    let governance_address = get_governance_address(program_id, realm, &governed_account_address);
+    let governance_address = get_governance_address(program_id, realm, governance_seed);
 
     let mut accounts = vec![
         AccountMeta::new_readonly(*realm, false),
         AccountMeta::new(governance_address, false),
-        AccountMeta::new_readonly(governed_account_address, false),
+        AccountMeta::new_readonly(*governance_seed, false),
         AccountMeta::new_readonly(*token_owner_record, false),
         AccountMeta::new(*payer, true),
         AccountMeta::new_readonly(system_program::id(), false),
@@ -1171,142 +1117,7 @@ pub fn create_governance(
     Instruction {
         program_id: *program_id,
         accounts,
-        data: instruction.try_to_vec().unwrap(),
-    }
-}
-
-/// Creates CreateProgramGovernance instruction
-#[allow(clippy::too_many_arguments)]
-pub fn create_program_governance(
-    program_id: &Pubkey,
-    // Accounts
-    realm: &Pubkey,
-    governed_program: &Pubkey,
-    governed_program_upgrade_authority: &Pubkey,
-    token_owner_record: &Pubkey,
-    payer: &Pubkey,
-    create_authority: &Pubkey,
-    voter_weight_record: Option<Pubkey>,
-    // Args
-    config: GovernanceConfig,
-    transfer_upgrade_authority: bool,
-) -> Instruction {
-    let program_governance_address =
-        get_program_governance_address(program_id, realm, governed_program);
-    let governed_program_data_address = get_program_data_address(governed_program);
-
-    let mut accounts = vec![
-        AccountMeta::new_readonly(*realm, false),
-        AccountMeta::new(program_governance_address, false),
-        AccountMeta::new_readonly(*governed_program, false),
-        AccountMeta::new(governed_program_data_address, false),
-        AccountMeta::new_readonly(*governed_program_upgrade_authority, true),
-        AccountMeta::new_readonly(*token_owner_record, false),
-        AccountMeta::new(*payer, true),
-        AccountMeta::new_readonly(bpf_loader_upgradeable::id(), false),
-        AccountMeta::new_readonly(system_program::id(), false),
-        AccountMeta::new_readonly(*create_authority, true),
-    ];
-
-    with_realm_config_accounts(program_id, &mut accounts, realm, voter_weight_record, None);
-
-    let instruction = GovernanceInstruction::CreateProgramGovernance {
-        config,
-        transfer_upgrade_authority,
-    };
-
-    Instruction {
-        program_id: *program_id,
-        accounts,
-        data: instruction.try_to_vec().unwrap(),
-    }
-}
-
-/// Creates CreateMintGovernance
-#[allow(clippy::too_many_arguments)]
-pub fn create_mint_governance(
-    program_id: &Pubkey,
-    // Accounts
-    realm: &Pubkey,
-    governed_mint: &Pubkey,
-    governed_mint_authority: &Pubkey,
-    token_owner_record: &Pubkey,
-    payer: &Pubkey,
-    create_authority: &Pubkey,
-    voter_weight_record: Option<Pubkey>,
-    // Args
-    config: GovernanceConfig,
-    transfer_mint_authorities: bool,
-) -> Instruction {
-    let mint_governance_address = get_mint_governance_address(program_id, realm, governed_mint);
-
-    let mut accounts = vec![
-        AccountMeta::new_readonly(*realm, false),
-        AccountMeta::new(mint_governance_address, false),
-        AccountMeta::new(*governed_mint, false),
-        AccountMeta::new_readonly(*governed_mint_authority, true),
-        AccountMeta::new_readonly(*token_owner_record, false),
-        AccountMeta::new(*payer, true),
-        AccountMeta::new_readonly(spl_token::id(), false),
-        AccountMeta::new_readonly(system_program::id(), false),
-        AccountMeta::new_readonly(*create_authority, true),
-    ];
-
-    with_realm_config_accounts(program_id, &mut accounts, realm, voter_weight_record, None);
-
-    let instruction = GovernanceInstruction::CreateMintGovernance {
-        config,
-        transfer_mint_authorities,
-    };
-
-    Instruction {
-        program_id: *program_id,
-        accounts,
-        data: instruction.try_to_vec().unwrap(),
-    }
-}
-
-/// Creates CreateTokenGovernance instruction
-#[allow(clippy::too_many_arguments)]
-pub fn create_token_governance(
-    program_id: &Pubkey,
-    // Accounts
-    realm: &Pubkey,
-    governed_token: &Pubkey,
-    governed_token_owner: &Pubkey,
-    token_owner_record: &Pubkey,
-    payer: &Pubkey,
-    create_authority: &Pubkey,
-    voter_weight_record: Option<Pubkey>,
-    // Args
-    config: GovernanceConfig,
-    transfer_account_authorities: bool,
-) -> Instruction {
-    let token_governance_address = get_token_governance_address(program_id, realm, governed_token);
-
-    let mut accounts = vec![
-        AccountMeta::new_readonly(*realm, false),
-        AccountMeta::new(token_governance_address, false),
-        AccountMeta::new(*governed_token, false),
-        AccountMeta::new_readonly(*governed_token_owner, true),
-        AccountMeta::new_readonly(*token_owner_record, false),
-        AccountMeta::new(*payer, true),
-        AccountMeta::new_readonly(spl_token::id(), false),
-        AccountMeta::new_readonly(system_program::id(), false),
-        AccountMeta::new_readonly(*create_authority, true),
-    ];
-
-    with_realm_config_accounts(program_id, &mut accounts, realm, voter_weight_record, None);
-
-    let instruction = GovernanceInstruction::CreateTokenGovernance {
-        config,
-        transfer_account_authorities,
-    };
-
-    Instruction {
-        program_id: *program_id,
-        accounts,
-        data: instruction.try_to_vec().unwrap(),
+        data: borsh::to_vec(&instruction).unwrap(),
     }
 }
 
@@ -1365,7 +1176,7 @@ pub fn create_proposal(
     Instruction {
         program_id: *program_id,
         accounts,
-        data: instruction.try_to_vec().unwrap(),
+        data: borsh::to_vec(&instruction).unwrap(),
     }
 }
 
@@ -1413,7 +1224,7 @@ pub fn add_signatory(
     Instruction {
         program_id: *program_id,
         accounts,
-        data: instruction.try_to_vec().unwrap(),
+        data: borsh::to_vec(&instruction).unwrap(),
     }
 }
 
@@ -1463,7 +1274,7 @@ pub fn sign_off_proposal(
     Instruction {
         program_id: *program_id,
         accounts,
-        data: instruction.try_to_vec().unwrap(),
+        data: borsh::to_vec(&instruction).unwrap(),
     }
 }
 
@@ -1514,7 +1325,7 @@ pub fn cast_vote(
     Instruction {
         program_id: *program_id,
         accounts,
-        data: instruction.try_to_vec().unwrap(),
+        data: borsh::to_vec(&instruction).unwrap(),
     }
 }
 
@@ -1550,7 +1361,7 @@ pub fn finalize_vote(
     Instruction {
         program_id: *program_id,
         accounts,
-        data: instruction.try_to_vec().unwrap(),
+        data: borsh::to_vec(&instruction).unwrap(),
     }
 }
 
@@ -1588,7 +1399,7 @@ pub fn relinquish_vote(
     Instruction {
         program_id: *program_id,
         accounts,
-        data: instruction.try_to_vec().unwrap(),
+        data: borsh::to_vec(&instruction).unwrap(),
     }
 }
 
@@ -1615,7 +1426,7 @@ pub fn cancel_proposal(
     Instruction {
         program_id: *program_id,
         accounts,
-        data: instruction.try_to_vec().unwrap(),
+        data: borsh::to_vec(&instruction).unwrap(),
     }
 }
 
@@ -1632,7 +1443,6 @@ pub fn insert_transaction(
     // Args
     option_index: u8,
     index: u16,
-    hold_up_time: u32,
     instructions: Vec<InstructionData>,
 ) -> Instruction {
     let proposal_transaction_address = get_proposal_transaction_address(
@@ -1656,14 +1466,14 @@ pub fn insert_transaction(
     let instruction = GovernanceInstruction::InsertTransaction {
         option_index,
         index,
-        hold_up_time,
+        legacy: 0,
         instructions,
     };
 
     Instruction {
         program_id: *program_id,
         accounts,
-        data: instruction.try_to_vec().unwrap(),
+        data: borsh::to_vec(&instruction).unwrap(),
     }
 }
 
@@ -1690,7 +1500,7 @@ pub fn remove_transaction(
     Instruction {
         program_id: *program_id,
         accounts,
-        data: instruction.try_to_vec().unwrap(),
+        data: borsh::to_vec(&instruction).unwrap(),
     }
 }
 
@@ -1718,7 +1528,7 @@ pub fn execute_transaction(
     Instruction {
         program_id: *program_id,
         accounts,
-        data: instruction.try_to_vec().unwrap(),
+        data: borsh::to_vec(&instruction).unwrap(),
     }
 }
 
@@ -1737,32 +1547,7 @@ pub fn set_governance_config(
     Instruction {
         program_id: *program_id,
         accounts,
-        data: instruction.try_to_vec().unwrap(),
-    }
-}
-
-/// Creates FlagTransactionError instruction
-pub fn flag_transaction_error(
-    program_id: &Pubkey,
-    // Accounts
-    proposal: &Pubkey,
-    token_owner_record: &Pubkey,
-    governance_authority: &Pubkey,
-    proposal_transaction: &Pubkey,
-) -> Instruction {
-    let accounts = vec![
-        AccountMeta::new(*proposal, false),
-        AccountMeta::new_readonly(*token_owner_record, false),
-        AccountMeta::new_readonly(*governance_authority, true),
-        AccountMeta::new(*proposal_transaction, false),
-    ];
-
-    let instruction = GovernanceInstruction::FlagTransactionError {};
-
-    Instruction {
-        program_id: *program_id,
-        accounts,
-        data: instruction.try_to_vec().unwrap(),
+        data: borsh::to_vec(&instruction).unwrap(),
     }
 }
 
@@ -1796,7 +1581,7 @@ pub fn set_realm_authority(
     Instruction {
         program_id: *program_id,
         accounts,
-        data: instruction.try_to_vec().unwrap(),
+        data: borsh::to_vec(&instruction).unwrap(),
     }
 }
 
@@ -1861,7 +1646,7 @@ pub fn set_realm_config(
     Instruction {
         program_id: *program_id,
         accounts,
-        data: instruction.try_to_vec().unwrap(),
+        data: borsh::to_vec(&instruction).unwrap(),
     }
 }
 
@@ -1923,7 +1708,7 @@ pub fn create_token_owner_record(
     Instruction {
         program_id: *program_id,
         accounts,
-        data: instruction.try_to_vec().unwrap(),
+        data: borsh::to_vec(&instruction).unwrap(),
     }
 }
 
@@ -1946,7 +1731,7 @@ pub fn upgrade_program_metadata(
     Instruction {
         program_id: *program_id,
         accounts,
-        data: instruction.try_to_vec().unwrap(),
+        data: borsh::to_vec(&instruction).unwrap(),
     }
 }
 
@@ -1971,7 +1756,7 @@ pub fn create_native_treasury(
     Instruction {
         program_id: *program_id,
         accounts,
-        data: instruction.try_to_vec().unwrap(),
+        data: borsh::to_vec(&instruction).unwrap(),
     }
 }
 
@@ -2014,7 +1799,7 @@ pub fn revoke_governing_tokens(
     Instruction {
         program_id: *program_id,
         accounts,
-        data: instruction.try_to_vec().unwrap(),
+        data: borsh::to_vec(&instruction).unwrap(),
     }
 }
 
@@ -2087,7 +1872,7 @@ pub fn add_required_signatory(
     Instruction {
         program_id: *program_id,
         accounts,
-        data: instruction.try_to_vec().unwrap(),
+        data: borsh::to_vec(&instruction).unwrap(),
     }
 }
 
@@ -2113,7 +1898,7 @@ pub fn remove_required_signatory(
     Instruction {
         program_id: *program_id,
         accounts,
-        data: instruction.try_to_vec().unwrap(),
+        data: borsh::to_vec(&instruction).unwrap(),
     }
 }
 
@@ -2171,7 +1956,7 @@ pub fn refund_proposal_deposit(
     Instruction {
         program_id: *program_id,
         accounts,
-        data: instruction.try_to_vec().unwrap(),
+        data: borsh::to_vec(&instruction).unwrap(),
     }
 }
 
@@ -2195,6 +1980,102 @@ pub fn complete_proposal(
     Instruction {
         program_id: *program_id,
         accounts,
-        data: instruction.try_to_vec().unwrap(),
+        data: borsh::to_vec(&instruction).unwrap(),
+    }
+}
+
+/// Creates SetTokenOwnerRecordLock instruction to issue TokenOwnerRecord lock
+pub fn set_token_owner_record_lock(
+    program_id: &Pubkey,
+    // Accounts
+    realm: &Pubkey,
+    token_owner_record: &Pubkey,
+    token_owner_record_lock_authority: &Pubkey,
+    payer: &Pubkey,
+    // Args
+    lock_id: u8,
+    expiry: Option<UnixTimestamp>,
+) -> Instruction {
+    let realm_config_address = get_realm_config_address(program_id, realm);
+
+    let accounts = vec![
+        AccountMeta::new_readonly(*realm, false),
+        AccountMeta::new_readonly(realm_config_address, false),
+        AccountMeta::new(*token_owner_record, false),
+        AccountMeta::new_readonly(*token_owner_record_lock_authority, true),
+        AccountMeta::new(*payer, true),
+        AccountMeta::new_readonly(system_program::id(), false),
+    ];
+
+    let instruction = GovernanceInstruction::SetTokenOwnerRecordLock { lock_id, expiry };
+
+    Instruction {
+        program_id: *program_id,
+        accounts,
+        data: borsh::to_vec(&instruction).unwrap(),
+    }
+}
+
+/// Creates RelinquishTokenOwnerRecordLocks instruction to remove
+/// TokenOwnerRecord locks
+pub fn relinquish_token_owner_record_locks(
+    program_id: &Pubkey,
+    // Accounts
+    realm: &Pubkey,
+    token_owner_record: &Pubkey,
+    token_owner_record_lock_authority: Option<Pubkey>,
+    // Args
+    lock_ids: Option<Vec<u8>>,
+) -> Instruction {
+    let realm_config_address = get_realm_config_address(program_id, realm);
+
+    let mut accounts = vec![
+        AccountMeta::new_readonly(*realm, false),
+        AccountMeta::new_readonly(realm_config_address, false),
+        AccountMeta::new(*token_owner_record, false),
+    ];
+
+    if let Some(token_owner_record_lock_authority) = token_owner_record_lock_authority {
+        accounts.push(AccountMeta::new_readonly(
+            token_owner_record_lock_authority,
+            true,
+        ));
+    }
+
+    let instruction = GovernanceInstruction::RelinquishTokenOwnerRecordLocks { lock_ids };
+
+    Instruction {
+        program_id: *program_id,
+        accounts,
+        data: borsh::to_vec(&instruction).unwrap(),
+    }
+}
+
+/// Creates SetRealmConfigItem instruction to set realm config
+pub fn set_realm_config_item(
+    program_id: &Pubkey,
+    // Accounts
+    realm: &Pubkey,
+    realm_authority: &Pubkey,
+    payer: &Pubkey,
+    // Args
+    args: SetRealmConfigItemArgs,
+) -> Instruction {
+    let realm_config_address = get_realm_config_address(program_id, realm);
+
+    let accounts = vec![
+        AccountMeta::new(*realm, false),
+        AccountMeta::new(realm_config_address, false),
+        AccountMeta::new_readonly(*realm_authority, true),
+        AccountMeta::new(*payer, true),
+        AccountMeta::new_readonly(system_program::id(), false),
+    ];
+
+    let instruction = GovernanceInstruction::SetRealmConfigItem { args };
+
+    Instruction {
+        program_id: *program_id,
+        accounts,
+        data: borsh::to_vec(&instruction).unwrap(),
     }
 }

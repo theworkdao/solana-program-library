@@ -84,7 +84,7 @@ pub struct ExtraAccountMeta {
     /// Whether the account should be writable
     pub is_writable: PodBool,
 }
-/// Helper used to to know when the top bit is set, to interpret the
+/// Helper used to know when the top bit is set, to interpret the
 /// discriminator as an index rather than as a type
 const U8_TOP_BIT: u8 = 1 << 7;
 impl ExtraAccountMeta {
@@ -215,8 +215,7 @@ impl TryFrom<&ExtraAccountMeta> for AccountMeta {
     fn try_from(pod: &ExtraAccountMeta) -> Result<Self, Self::Error> {
         if pod.discriminator == 0 {
             Ok(AccountMeta {
-                pubkey: Pubkey::try_from(pod.address_config)
-                    .map_err(|_| ProgramError::from(AccountResolutionError::InvalidPubkey))?,
+                pubkey: Pubkey::from(pod.address_config),
                 is_signer: pod.is_signer.into(),
                 is_writable: pod.is_writable.into(),
             })

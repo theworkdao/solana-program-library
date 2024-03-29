@@ -13,8 +13,8 @@ sol-log = [ "log" ]
 
 [dependencies]
 solana-program = "1.16"
-bytemuck = "1.14"
-thiserror = "1.0.57"
+bytemuck = "1.15"
+thiserror = "1.0.58"
 
 [dev-dependencies]
 rand_distr = "0.4.3"

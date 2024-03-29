@@ -10,9 +10,10 @@ use {
             token_owner_record::get_token_owner_record_data_for_realm,
             vote_record::VoteKind,
         },
+        tools::structs::SetConfigItemActionType,
         PROGRAM_AUTHORITY_SEED,
     },
-    borsh::{maybestd::io::Write, BorshDeserialize, BorshSchema, BorshSerialize},
+    borsh::{io::Write, BorshDeserialize, BorshSchema, BorshSerialize},
     solana_program::{
         account_info::{next_account_info, AccountInfo},
         program_error::ProgramError,
@@ -25,6 +26,26 @@ use {
     },
     std::slice::Iter,
 };
+
+/// SetRealmConfigItem instruction arguments to set a single Realm config item
+/// Note: In the current version only TokenOwnerRecordLockAuthority is supported
+/// Eventually all Realm config items should be supported for single config item
+/// change
+#[derive(Clone, Debug, PartialEq, Eq, BorshDeserialize, BorshSerialize, BorshSchema)]
+pub enum SetRealmConfigItemArgs {
+    /// Set TokenOwnerRecord lock authority
+    TokenOwnerRecordLockAuthority {
+        /// Action indicating whether to add or remove the lock authority
+        #[allow(dead_code)]
+        action: SetConfigItemActionType,
+        /// Mint of the governing token the lock authority is for
+        #[allow(dead_code)]
+        governing_token_mint: Pubkey,
+        /// Authority to change
+        #[allow(dead_code)]
+        authority: Pubkey,
+    },
+}
 
 /// Realm Config instruction args
 #[derive(Clone, Debug, PartialEq, Eq, BorshDeserialize, BorshSerialize, BorshSchema)]
@@ -480,7 +501,7 @@ mod test {
 
     use {
         super::*, crate::instruction::GovernanceInstruction,
-        solana_program::borsh0_10::try_from_slice_unchecked,
+        solana_program::borsh1::try_from_slice_unchecked,
     };
 
     #[test]
@@ -505,7 +526,7 @@ mod test {
             reserved_v2: [0; 128],
         };
 
-        let size = realm.try_to_vec().unwrap().len();
+        let size = borsh::to_vec(&realm).unwrap().len();
 
         assert_eq!(realm.get_max_size(), Some(size));
     }

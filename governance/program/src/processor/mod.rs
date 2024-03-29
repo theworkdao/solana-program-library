@@ -6,9 +6,8 @@ mod process_cancel_proposal;
 mod process_cast_vote;
 mod process_complete_proposal;
 mod process_create_governance;
-mod process_create_mint_governance;
 mod process_create_native_treasury;
-mod process_create_program_governance;
+
 mod process_create_proposal;
 mod process_create_realm;
 mod process_create_realm_2022;
@@ -18,9 +17,10 @@ mod process_deposit_governing_tokens;
 mod process_deposit_governing_tokens_2022;
 mod process_execute_transaction;
 mod process_finalize_vote;
-mod process_flag_transaction_error;
+
 mod process_insert_transaction;
 mod process_refund_proposal_deposit;
+mod process_relinquish_token_owner_record_locks;
 mod process_relinquish_vote;
 mod process_remove_required_signatory;
 mod process_remove_transaction;
@@ -30,6 +30,8 @@ mod process_set_governance_config;
 mod process_set_governance_delegate;
 mod process_set_realm_authority;
 mod process_set_realm_config;
+mod process_set_realm_config_item;
+mod process_set_token_owner_record_lock;
 mod process_sign_off_proposal;
 mod process_update_program_metadata;
 mod process_withdraw_governing_tokens;
@@ -43,9 +45,7 @@ use {
     process_cast_vote::*,
     process_complete_proposal::*,
     process_create_governance::*,
-    process_create_mint_governance::*,
     process_create_native_treasury::*,
-    process_create_program_governance::*,
     process_create_proposal::*,
     process_create_realm::*,
     process_create_realm_2022::*,
@@ -55,9 +55,9 @@ use {
     process_deposit_governing_tokens_2022::*,
     process_execute_transaction::*,
     process_finalize_vote::*,
-    process_flag_transaction_error::*,
     process_insert_transaction::*,
     process_refund_proposal_deposit::*,
+    process_relinquish_token_owner_record_locks::*,
     process_relinquish_vote::*,
     process_remove_required_signatory::*,
     process_remove_transaction::*,
@@ -67,12 +67,14 @@ use {
     process_set_governance_delegate::*,
     process_set_realm_authority::*,
     process_set_realm_config::*,
+    process_set_realm_config_item::*,
+    process_set_token_owner_record_lock::*,
     process_sign_off_proposal::*,
     process_update_program_metadata::*,
     process_withdraw_governing_tokens::*,
     process_withdraw_governing_tokens_2022::*,
     solana_program::{
-        account_info::AccountInfo, borsh0_10::try_from_slice_unchecked, entrypoint::ProgramResult,
+        account_info::AccountInfo, borsh1::try_from_slice_unchecked, entrypoint::ProgramResult,
         msg, program_error::ProgramError, pubkey::Pubkey,
     },
 };
@@ -92,16 +94,15 @@ pub fn process_instruction(
     if let GovernanceInstruction::InsertTransaction {
         option_index,
         index,
-        hold_up_time,
+        legacy: _,
         instructions: _,
     } = instruction
     {
         // Do not dump instruction data into logs
         msg!(
-            "GOVERNANCE-INSTRUCTION: InsertInstruction {{option_index: {:?}, index: {:?}, hold_up_time: {:?} }}",
+            "GOVERNANCE-INSTRUCTION: InsertInstruction {{option_index: {:?}, index: {:?}}}",
             option_index,
             index,
-            hold_up_time
         );
     } else {
         msg!("GOVERNANCE-INSTRUCTION: {:?}", instruction);
@@ -136,33 +137,6 @@ pub fn process_instruction(
             new_governance_delegate,
         } => process_set_governance_delegate(program_id, accounts, &new_governance_delegate),
 
-        GovernanceInstruction::CreateProgramGovernance {
-            config,
-            transfer_upgrade_authority,
-        } => process_create_program_governance(
-            program_id,
-            accounts,
-            config,
-            transfer_upgrade_authority,
-        ),
-
-        GovernanceInstruction::CreateMintGovernance {
-            config,
-            transfer_mint_authorities,
-        } => {
-            process_create_mint_governance(program_id, accounts, config, transfer_mint_authorities)
-        }
-
-        GovernanceInstruction::CreateTokenGovernance {
-            config,
-            transfer_account_authorities,
-        } => process_create_token_governance(
-            program_id,
-            accounts,
-            config,
-            transfer_account_authorities,
-        ),
-
         GovernanceInstruction::CreateGovernance { config } => {
             process_create_governance(program_id, accounts, config)
         }
@@ -187,7 +161,11 @@ pub fn process_instruction(
         GovernanceInstruction::AddSignatory { signatory } => {
             process_add_signatory(program_id, accounts, signatory)
         }
-        GovernanceInstruction::Legacy1 => {
+        GovernanceInstruction::Legacy1
+        | GovernanceInstruction::Legacy2
+        | GovernanceInstruction::Legacy3
+        | GovernanceInstruction::Legacy4
+        | GovernanceInstruction::Legacy5 => {
             Err(GovernanceError::InstructionDeprecated.into()) // No-op
         }
         GovernanceInstruction::SignOffProposal {} => {
@@ -204,16 +182,9 @@ pub fn process_instruction(
         GovernanceInstruction::InsertTransaction {
             option_index,
             index,
-            hold_up_time,
+            legacy: _,
             instructions,
-        } => process_insert_transaction(
-            program_id,
-            accounts,
-            option_index,
-            index,
-            hold_up_time,
-            instructions,
-        ),
+        } => process_insert_transaction(program_id, accounts, option_index, index, instructions),
 
         GovernanceInstruction::RemoveTransaction {} => {
             process_remove_transaction(program_id, accounts)
@@ -226,9 +197,6 @@ pub fn process_instruction(
             process_set_governance_config(program_id, accounts, config)
         }
 
-        GovernanceInstruction::FlagTransactionError {} => {
-            process_flag_transaction_error(program_id, accounts)
-        }
         GovernanceInstruction::SetRealmAuthority { action } => {
             process_set_realm_authority(program_id, accounts, action)
         }
@@ -266,6 +234,18 @@ pub fn process_instruction(
         }
         GovernanceInstruction::RemoveRequiredSignatory => {
             process_remove_required_signatory(program_id, accounts)
+        }
+
+        GovernanceInstruction::SetTokenOwnerRecordLock { lock_id, expiry } => {
+            process_set_token_owner_record_lock(program_id, accounts, lock_id, expiry)
+        }
+
+        GovernanceInstruction::RelinquishTokenOwnerRecordLocks { lock_ids } => {
+            process_relinquish_token_owner_record_locks(program_id, accounts, lock_ids)
+        }
+
+        GovernanceInstruction::SetRealmConfigItem { args } => {
+            process_set_realm_config_item(program_id, accounts, args)
         }
     }
 }

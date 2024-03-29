@@ -13,8 +13,8 @@ pub struct LegacyGovernanceV1 {
     /// Governance Realm
     pub realm: Pubkey,
 
-    /// Account governed by this Governance.
-    pub governed_account: Pubkey,
+    /// Governance seed
+    pub governance_seed: Pubkey,
 
     /// Running count of proposals
     pub proposals_count: u32,
@@ -36,9 +36,9 @@ pub struct LegacyGovernanceConfigV1 {
     /// to be able to create a proposal
     pub min_community_tokens_to_create_proposal: u64,
 
-    /// Minimum waiting time in seconds for an instruction to be executed after
-    /// proposal is voted on
-    pub min_instruction_hold_up_time: u32,
+    /// The wait time in seconds before transactions can be executed after
+    /// proposal is successfully voted on
+    pub transactions_hold_up_time: u32,
 
     /// Time limit in seconds for proposal to be open for voting
     pub max_voting_time: u32,
@@ -113,14 +113,14 @@ impl From<GovernanceV2> for LegacyGovernanceV1 {
         LegacyGovernanceV1 {
             account_type,
             realm: governance_v2.realm,
-            governed_account: governance_v2.governed_account,
+            governance_seed: governance_v2.governance_seed,
             proposals_count: 0,
             config: LegacyGovernanceConfigV1 {
                 vote_threshold_percentage: VoteThresholdPercentage::YesVote(yes_vote_threshold),
                 min_community_tokens_to_create_proposal: governance_v2
                     .config
                     .min_community_weight_to_create_proposal,
-                min_instruction_hold_up_time: governance_v2.config.min_transaction_hold_up_time,
+                transactions_hold_up_time: governance_v2.config.transactions_hold_up_time,
                 max_voting_time: governance_v2.config.voting_base_time,
                 vote_weight_source: VoteWeightSource::Deposit,
                 proposal_cool_off_time: 0,

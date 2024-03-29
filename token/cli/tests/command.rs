@@ -107,10 +107,11 @@ async fn main() {
         async_trial!(disable_mint_authority, test_validator, payer),
         async_trial!(set_owner, test_validator, payer),
         async_trial!(transfer_with_account_delegate, test_validator, payer),
+        async_trial!(burn, test_validator, payer),
         async_trial!(burn_with_account_delegate, test_validator, payer),
-        async_trial!(close_mint, test_validator, payer),
         async_trial!(burn_with_permanent_delegate, test_validator, payer),
         async_trial!(transfer_with_permanent_delegate, test_validator, payer),
+        async_trial!(close_mint, test_validator, payer),
         async_trial!(required_transfer_memos, test_validator, payer),
         async_trial!(cpi_guard, test_validator, payer),
         async_trial!(immutable_accounts, test_validator, payer),
@@ -134,6 +135,7 @@ async fn main() {
         async_trial!(metadata, test_validator, payer),
         async_trial!(group, test_validator, payer),
         async_trial!(confidential_transfer_with_fee, test_validator, payer),
+        async_trial!(compute_budget, test_validator, payer),
         // GC messes with every other test, so have it on its own test validator
         async_trial!(gc, gc_test_validator, gc_payer),
     ];
@@ -198,6 +200,8 @@ fn test_config_with_default_signer<'a>(
         multisigner_pubkeys: vec![],
         program_id: *program_id,
         restrict_to_program_id: true,
+        compute_unit_price: None,
+        compute_unit_limit: None,
     }
 }
 
@@ -225,6 +229,8 @@ fn test_config_without_default_signer<'a>(
         multisigner_pubkeys: vec![],
         program_id: *program_id,
         restrict_to_program_id: true,
+        compute_unit_price: None,
+        compute_unit_limit: None,
     }
 }
 
@@ -377,6 +383,38 @@ async fn mint_tokens(
         ],
     )
     .await
+}
+
+async fn run_transfer_test(config: &Config<'_>, payer: &Keypair) {
+    let token = create_token(config, payer).await;
+    let source = create_associated_account(config, payer, &token, &payer.pubkey()).await;
+    let destination = create_auxiliary_account(config, payer, token).await;
+    let ui_amount = 100.0;
+    mint_tokens(config, payer, token, ui_amount, source)
+        .await
+        .unwrap();
+    let result = process_test_command(
+        config,
+        payer,
+        &[
+            "spl-token",
+            CommandName::Transfer.into(),
+            &token.to_string(),
+            "10",
+            &destination.to_string(),
+        ],
+    )
+    .await;
+    result.unwrap();
+
+    let account = config.rpc_client.get_account(&source).await.unwrap();
+    let token_account = StateWithExtensionsOwned::<Account>::unpack(account.data).unwrap();
+    let amount = spl_token::ui_amount_to_amount(90.0, TEST_DECIMALS);
+    assert_eq!(token_account.base.amount, amount);
+    let account = config.rpc_client.get_account(&destination).await.unwrap();
+    let token_account = StateWithExtensionsOwned::<Account>::unpack(account.data).unwrap();
+    let amount = spl_token::ui_amount_to_amount(10.0, TEST_DECIMALS);
+    assert_eq!(token_account.base.amount, amount);
 }
 
 async fn process_test_command<I, T>(config: &Config<'_>, payer: &Keypair, args: I) -> CommandResult
@@ -854,35 +892,7 @@ async fn wrapped_sol(test_validator: &TestValidator, payer: &Keypair) {
 async fn transfer(test_validator: &TestValidator, payer: &Keypair) {
     for program_id in VALID_TOKEN_PROGRAM_IDS.iter() {
         let config = test_config_with_default_signer(test_validator, payer, program_id);
-        let token = create_token(&config, payer).await;
-        let source = create_associated_account(&config, payer, &token, &payer.pubkey()).await;
-        let destination = create_auxiliary_account(&config, payer, token).await;
-        let ui_amount = 100.0;
-        mint_tokens(&config, payer, token, ui_amount, source)
-            .await
-            .unwrap();
-        let result = process_test_command(
-            &config,
-            payer,
-            &[
-                "spl-token",
-                CommandName::Transfer.into(),
-                &token.to_string(),
-                "10",
-                &destination.to_string(),
-            ],
-        )
-        .await;
-        result.unwrap();
-
-        let account = config.rpc_client.get_account(&source).await.unwrap();
-        let token_account = StateWithExtensionsOwned::<Account>::unpack(account.data).unwrap();
-        let amount = spl_token::ui_amount_to_amount(90.0, TEST_DECIMALS);
-        assert_eq!(token_account.base.amount, amount);
-        let account = config.rpc_client.get_account(&destination).await.unwrap();
-        let token_account = StateWithExtensionsOwned::<Account>::unpack(account.data).unwrap();
-        let amount = spl_token::ui_amount_to_amount(10.0, TEST_DECIMALS);
-        assert_eq!(token_account.base.amount, amount);
+        run_transfer_test(&config, payer).await;
     }
 }
 
@@ -1508,6 +1518,82 @@ async fn transfer_with_account_delegate(test_validator: &TestValidator, payer: &
     }
 }
 
+async fn burn(test_validator: &TestValidator, payer: &Keypair) {
+    for program_id in VALID_TOKEN_PROGRAM_IDS.iter() {
+        let mut config = test_config_with_default_signer(test_validator, payer, program_id);
+        let token = create_token(&config, payer).await;
+        let source = create_associated_account(&config, payer, &token, &payer.pubkey()).await;
+        let ui_amount = 100.0;
+        mint_tokens(&config, payer, token, ui_amount, source)
+            .await
+            .unwrap();
+
+        process_test_command(
+            &config,
+            payer,
+            &[
+                "spl-token",
+                CommandName::Burn.into(),
+                &source.to_string(),
+                "10",
+            ],
+        )
+        .await
+        .unwrap();
+
+        let account = config.rpc_client.get_account(&source).await.unwrap();
+        let token_account = StateWithExtensionsOwned::<Account>::unpack(account.data).unwrap();
+        let amount = spl_token::ui_amount_to_amount(90.0, TEST_DECIMALS);
+        assert_eq!(token_account.base.amount, amount);
+
+        process_test_command(
+            &config,
+            payer,
+            &[
+                "spl-token",
+                CommandName::Burn.into(),
+                &source.to_string(),
+                "ALL",
+            ],
+        )
+        .await
+        .unwrap();
+
+        let account = config.rpc_client.get_account(&source).await.unwrap();
+        let token_account = StateWithExtensionsOwned::<Account>::unpack(account.data).unwrap();
+        let amount = spl_token::ui_amount_to_amount(0.0, TEST_DECIMALS);
+        assert_eq!(token_account.base.amount, amount);
+
+        let result = process_test_command(
+            &config,
+            payer,
+            &[
+                "spl-token",
+                CommandName::Burn.into(),
+                &source.to_string(),
+                "10",
+            ],
+        )
+        .await;
+        assert!(result.is_err());
+
+        // Use of the ALL keyword not supported with offline signing
+        config.sign_only = true;
+        let result = process_test_command(
+            &config,
+            payer,
+            &[
+                "spl-token",
+                CommandName::Burn.into(),
+                &source.to_string(),
+                "ALL",
+            ],
+        )
+        .await;
+        assert!(result.is_err_and(|err| err.to_string().contains("ALL")));
+    }
+}
+
 async fn burn_with_account_delegate(test_validator: &TestValidator, payer: &Keypair) {
     for program_id in VALID_TOKEN_PROGRAM_IDS.iter() {
         let config = test_config_with_default_signer(test_validator, payer, program_id);
@@ -1598,46 +1684,6 @@ async fn burn_with_account_delegate(test_validator: &TestValidator, payer: &Keyp
         assert_eq!(ui_account.delegate, None);
         assert_eq!(ui_account.delegated_amount, None);
     }
-}
-
-async fn close_mint(test_validator: &TestValidator, payer: &Keypair) {
-    let config = test_config_with_default_signer(test_validator, payer, &spl_token_2022::id());
-
-    let token = Keypair::new();
-    let token_pubkey = token.pubkey();
-    let token_keypair_file = NamedTempFile::new().unwrap();
-    write_keypair_file(&token, &token_keypair_file).unwrap();
-    process_test_command(
-        &config,
-        payer,
-        &[
-            "spl-token",
-            CommandName::CreateToken.into(),
-            token_keypair_file.path().to_str().unwrap(),
-            "--enable-close",
-        ],
-    )
-    .await
-    .unwrap();
-
-    let account = config.rpc_client.get_account(&token_pubkey).await.unwrap();
-    let test_mint = StateWithExtensionsOwned::<Mint>::unpack(account.data);
-    assert!(test_mint.is_ok());
-
-    process_test_command(
-        &config,
-        payer,
-        &[
-            "spl-token",
-            CommandName::CloseMint.into(),
-            &token_pubkey.to_string(),
-        ],
-    )
-    .await
-    .unwrap();
-
-    let account = config.rpc_client.get_account(&token_pubkey).await;
-    assert!(account.is_err());
 }
 
 async fn burn_with_permanent_delegate(test_validator: &TestValidator, payer: &Keypair) {
@@ -1795,6 +1841,46 @@ async fn transfer_with_permanent_delegate(test_validator: &TestValidator, payer:
 
     let amount = spl_token::ui_amount_to_amount(50.0, TEST_DECIMALS);
     assert_eq!(ui_account.token_amount.amount, format!("{amount}"));
+}
+
+async fn close_mint(test_validator: &TestValidator, payer: &Keypair) {
+    let config = test_config_with_default_signer(test_validator, payer, &spl_token_2022::id());
+
+    let token = Keypair::new();
+    let token_pubkey = token.pubkey();
+    let token_keypair_file = NamedTempFile::new().unwrap();
+    write_keypair_file(&token, &token_keypair_file).unwrap();
+    process_test_command(
+        &config,
+        payer,
+        &[
+            "spl-token",
+            CommandName::CreateToken.into(),
+            token_keypair_file.path().to_str().unwrap(),
+            "--enable-close",
+        ],
+    )
+    .await
+    .unwrap();
+
+    let account = config.rpc_client.get_account(&token_pubkey).await.unwrap();
+    let test_mint = StateWithExtensionsOwned::<Mint>::unpack(account.data);
+    assert!(test_mint.is_ok());
+
+    process_test_command(
+        &config,
+        payer,
+        &[
+            "spl-token",
+            CommandName::CloseMint.into(),
+            &token_pubkey.to_string(),
+        ],
+    )
+    .await
+    .unwrap();
+
+    let account = config.rpc_client.get_account(&token_pubkey).await;
+    assert!(account.is_err());
 }
 
 async fn required_transfer_memos(test_validator: &TestValidator, payer: &Keypair) {
@@ -3325,9 +3411,9 @@ async fn metadata_pointer(test_validator: &TestValidator, payer: &Keypair) {
     )
     .await;
 
-    let new_account_disbale = config.rpc_client.get_account(&mint).await.unwrap();
+    let new_account_disable = config.rpc_client.get_account(&mint).await.unwrap();
     let new_mint_state_disable =
-        StateWithExtensionsOwned::<Mint>::unpack(new_account_disbale.data).unwrap();
+        StateWithExtensionsOwned::<Mint>::unpack(new_account_disable.data).unwrap();
 
     let new_extension_disable = new_mint_state_disable
         .get_extension::<MetadataPointer>()
@@ -3408,9 +3494,9 @@ async fn group_pointer(test_validator: &TestValidator, payer: &Keypair) {
     .await
     .unwrap();
 
-    let new_account_disbale = config.rpc_client.get_account(&mint).await.unwrap();
+    let new_account_disable = config.rpc_client.get_account(&mint).await.unwrap();
     let new_mint_state_disable =
-        StateWithExtensionsOwned::<Mint>::unpack(new_account_disbale.data).unwrap();
+        StateWithExtensionsOwned::<Mint>::unpack(new_account_disable.data).unwrap();
 
     let new_extension_disable = new_mint_state_disable
         .get_extension::<GroupPointer>()
@@ -3493,9 +3579,9 @@ async fn group_member_pointer(test_validator: &TestValidator, payer: &Keypair) {
     )
     .await;
 
-    let new_account_disbale = config.rpc_client.get_account(&mint).await.unwrap();
+    let new_account_disable = config.rpc_client.get_account(&mint).await.unwrap();
     let new_mint_state_disable =
-        StateWithExtensionsOwned::<Mint>::unpack(new_account_disbale.data).unwrap();
+        StateWithExtensionsOwned::<Mint>::unpack(new_account_disable.data).unwrap();
 
     let new_extension_disable = new_mint_state_disable
         .get_extension::<GroupMemberPointer>()
@@ -3932,4 +4018,13 @@ async fn group(test_validator: &TestValidator, payer: &Keypair) {
     let mint_state = StateWithExtensionsOwned::<Mint>::unpack(account.data).unwrap();
     let extension = mint_state.get_extension::<TokenGroup>().unwrap();
     assert_eq!(extension.update_authority, Some(mint).try_into().unwrap());
+}
+
+async fn compute_budget(test_validator: &TestValidator, payer: &Keypair) {
+    for program_id in VALID_TOKEN_PROGRAM_IDS.iter() {
+        let mut config = test_config_with_default_signer(test_validator, payer, program_id);
+        config.compute_unit_price = Some(42);
+        config.compute_unit_limit = Some(30_000);
+        run_transfer_test(&config, payer).await;
+    }
 }
