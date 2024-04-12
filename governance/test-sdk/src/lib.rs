@@ -123,19 +123,26 @@ impl ProgramTestBench {
         mint_keypair: &Keypair,
         mint_authority: &Pubkey,
         freeze_authority: Option<&Pubkey>,
+        token_program_id:Option<&Pubkey>
     ) {
         let mint_rent = self.rent.minimum_balance(spl_token::state::Mint::LEN);
-
+        //Determine if token_program_id is provided else set it to normal token program
+        let normal_spl_token = &spl_token::id();
+        let token_program = if token_program_id.is_some() {
+           token_program_id.unwrap()
+        }else{
+            normal_spl_token
+        };
         let instructions = [
             system_instruction::create_account(
                 &self.context.payer.pubkey(),
                 &mint_keypair.pubkey(),
                 mint_rent,
                 spl_token::state::Mint::LEN as u64,
-                &spl_token::id(),
+                token_program,
             ),
             spl_token::instruction::initialize_mint(
-                &spl_token::id(),
+                token_program,
                 &mint_keypair.pubkey(),
                 mint_authority,
                 freeze_authority,
@@ -156,9 +163,17 @@ impl ProgramTestBench {
         account_authority: &Keypair,
         new_authority: Option<&Pubkey>,
         authority_type: AuthorityType,
+        token_program_id:Option<&Pubkey>
     ) {
+          //Determine if token_program_id is provided else set it to normal token program
+          let normal_spl_token = &spl_token::id();
+          let token_program = if token_program_id.is_some() {
+             token_program_id.unwrap()
+          }else{
+              normal_spl_token
+          };
         let set_authority_ix = set_authority(
-            &spl_token::id(),
+            token_program,
             account,
             new_authority,
             authority_type,
@@ -178,18 +193,26 @@ impl ProgramTestBench {
         token_account_keypair: &Keypair,
         token_mint: &Pubkey,
         owner: &Pubkey,
+        token_program_id:Option<&Pubkey>
     ) {
+          //Determine if token_program_id is provided else set it to normal token program
+          let normal_spl_token = &spl_token::id();
+          let token_program = if token_program_id.is_some() {
+             token_program_id.unwrap()
+          }else{
+              normal_spl_token
+          };
         let create_account_instruction = system_instruction::create_account(
             &self.context.payer.pubkey(),
             &token_account_keypair.pubkey(),
             self.rent
                 .minimum_balance(spl_token::state::Account::get_packed_len()),
             spl_token::state::Account::get_packed_len() as u64,
-            &spl_token::id(),
+            token_program,
         );
 
         let initialize_account_instruction = spl_token::instruction::initialize_account(
-            &spl_token::id(),
+            token_program,
             &token_account_keypair.pubkey(),
             token_mint,
             owner,
@@ -211,10 +234,18 @@ impl ProgramTestBench {
         owner: &Pubkey,
         token_mint_authority: &Keypair,
         amount: u64,
+        token_program_id:Option<&Pubkey>
     ) -> TokenAccountCookie {
+    //Determine if token_program_id is provided else set it to normal token program
+    let normal_spl_token = &spl_token::id();
+    let token_program = if token_program_id.is_some() {
+        token_program_id.unwrap()
+    }else{
+        normal_spl_token
+    };
         let token_account_keypair = Keypair::new();
 
-        self.create_empty_token_account(&token_account_keypair, token_mint, owner)
+        self.create_empty_token_account(&token_account_keypair, token_mint, owner,Some(token_program))
             .await;
 
         self.mint_tokens(
@@ -222,6 +253,7 @@ impl ProgramTestBench {
             token_mint_authority,
             &token_account_keypair.pubkey(),
             amount,
+            Some(token_program)
         )
         .await;
 
@@ -244,9 +276,17 @@ impl ProgramTestBench {
         token_mint_authority: &Keypair,
         token_account: &Pubkey,
         amount: u64,
+        token_program_id:Option<&Pubkey>
     ) {
+          //Determine if token_program_id is provided else set it to normal token program
+          let normal_spl_token = &spl_token::id();
+          let token_program = if token_program_id.is_some() {
+             token_program_id.unwrap()
+          }else{
+              normal_spl_token
+          };
         let mint_instruction = spl_token::instruction::mint_to(
-            &spl_token::id(),
+            token_program,
             token_mint,
             token_account,
             &token_mint_authority.pubkey(),
@@ -269,18 +309,26 @@ impl ProgramTestBench {
         amount: u64,
         owner: &Keypair,
         transfer_authority: &Pubkey,
+        token_program_id:Option<&Pubkey>
     ) {
+          //Determine if token_program_id is provided else set it to normal token program
+          let normal_spl_token = &spl_token::id();
+          let token_program = if token_program_id.is_some() {
+             token_program_id.unwrap()
+          }else{
+              normal_spl_token
+          };
         let create_account_instruction = system_instruction::create_account(
             &self.context.payer.pubkey(),
             &token_account_keypair.pubkey(),
             self.rent
                 .minimum_balance(spl_token::state::Account::get_packed_len()),
             spl_token::state::Account::get_packed_len() as u64,
-            &spl_token::id(),
+            token_program,
         );
 
         let initialize_account_instruction = spl_token::instruction::initialize_account(
-            &spl_token::id(),
+            token_program,
             &token_account_keypair.pubkey(),
             token_mint,
             &owner.pubkey(),
@@ -288,7 +336,7 @@ impl ProgramTestBench {
         .unwrap();
 
         let mint_instruction = spl_token::instruction::mint_to(
-            &spl_token::id(),
+            token_program,
             token_mint,
             &token_account_keypair.pubkey(),
             &token_mint_authority.pubkey(),
@@ -298,7 +346,7 @@ impl ProgramTestBench {
         .unwrap();
 
         let approve_instruction = spl_token::instruction::approve(
-            &spl_token::id(),
+            token_program,
             &token_account_keypair.pubkey(),
             transfer_authority,
             &owner.pubkey(),
