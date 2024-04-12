@@ -12,9 +12,15 @@ use {
                 TokenOwnerRecordV2, TOKEN_OWNER_RECORD_LAYOUT_VERSION,
             },
         },
-        tools::spl_token::{
-            get_spl_token_mint, is_spl_token_account, is_spl_token_mint, mint_spl_tokens_to,
-            transfer_spl_tokens,
+        tools::{
+            spl_token::{
+                get_spl_token_mint, is_spl_token_account, is_spl_token_mint, mint_spl_tokens_to,
+                transfer_spl_tokens,
+            },
+            token2022::{ // Assuming token2022 tools are similarly structured to spl_token
+                get_token2022_mint, is_token2022_account, is_token2022_mint, mint_token2022_to,
+                transfer_token2022,
+            },
         },
     },
     solana_program::{
@@ -32,6 +38,7 @@ pub fn process_deposit_governing_tokens(
     program_id: &Pubkey,
     accounts: &[AccountInfo],
     amount: u64,
+    token_type: TokenType, // Added to differentiate between token versions
 ) -> ProgramResult {
     let account_info_iter = &mut accounts.iter();
 
@@ -49,7 +56,10 @@ pub fn process_deposit_governing_tokens(
     let rent = Rent::get()?;
 
     let realm_data = get_realm_data(program_id, realm_info)?;
-    let governing_token_mint = get_spl_token_mint(governing_token_holding_info)?;
+    let governing_token_mint = match token_type {
+        TokenType::SPL => get_spl_token_mint(governing_token_holding_info)?,
+        TokenType::Token2022 => get_token2022_mint(governing_token_holding_info)?,
+    };
 
     realm_data.assert_is_valid_governing_token_mint_and_holding(
         program_id,
@@ -63,26 +73,49 @@ pub fn process_deposit_governing_tokens(
 
     realm_config_data.assert_can_deposit_governing_token(&realm_data, &governing_token_mint)?;
 
-    if is_spl_token_account(governing_token_source_info) {
-        // If the source is spl-token token account then transfer tokens from it
-        transfer_spl_tokens(
-            governing_token_source_info,
-            governing_token_holding_info,
-            governing_token_source_authority_info,
-            amount,
-            spl_token_info,
-        )?;
-    } else if is_spl_token_mint(governing_token_source_info) {
-        // If it's a mint then mint the tokens
-        mint_spl_tokens_to(
-            governing_token_source_info,
-            governing_token_holding_info,
-            governing_token_source_authority_info,
-            amount,
-            spl_token_info,
-        )?;
-    } else {
-        return Err(GovernanceError::InvalidGoverningTokenSource.into());
+    match token_type {
+        TokenType::SPL => {
+            if is_spl_token_account(governing_token_source_info) {
+                transfer_spl_tokens(
+                    governing_token_source_info,
+                    governing_token_holding_info,
+                    governing_token_source_authority_info,
+                    amount,
+                    spl_token_info,
+                )?;
+            } else if is_spl_token_mint(governing_token_source_info) {
+                mint_spl_tokens_to(
+                    governing_token_source_info,
+                    governing_token_holding_info,
+                    governing_token_source_authority_info,
+                    amount,
+                    spl_token_info,
+                )?;
+            } else {
+                return Err(GovernanceError::InvalidGoverningTokenSource.into());
+            }
+        },
+        TokenType::Token2022 => {
+            if is_token2022_account(governing_token_source_info) {
+                transfer_token2022(
+                    governing_token_source_info,
+                    governing_token_holding_info,
+                    governing_token_source_authority_info,
+                    amount,
+                    spl_token_info,
+                )?;
+            } else if is_token2022_mint(governing_token_source_info) {
+                mint_token2022_to(
+                    governing_token_source_info,
+                    governing_token_holding_info,
+                    governing_token_source_authority_info,
+                    amount,
+                    spl_token_info,
+                )?;
+            } else {
+                return Err(GovernanceError::InvalidGoverningTokenSource.into());
+            }
+        }
     }
 
     let token_owner_record_address_seeds = get_token_owner_record_address_seeds(
@@ -92,8 +125,6 @@ pub fn process_deposit_governing_tokens(
     );
 
     if token_owner_record_info.data_is_empty() {
-        // Deposited tokens can only be withdrawn by the owner so let's make sure the
-        // owner signed the transaction
         if !governing_token_owner_info.is_signer {
             return Err(GovernanceError::GoverningTokenOwnerMustSign.into());
         }
@@ -139,4 +170,9 @@ pub fn process_deposit_governing_tokens(
     }
 
     Ok(())
+}
+
+enum TokenType {
+    SPL,
+    Token2022,
 }
