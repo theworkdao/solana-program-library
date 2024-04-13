@@ -5,19 +5,19 @@ use {
         error::GovernanceError,
         state::{
             enums::GovernanceAccountType,
-            realm::get_realm_data,
-            realm_config::get_realm_config_data_for_realm,
+            realm::{get_realm_data, assert_is_valid_governing_token_mint_and_holding},
+            realm_config::{get_realm_config_data_for_realm, assert_can_deposit_governing_token},
             token_owner_record::{
                 get_token_owner_record_address_seeds, get_token_owner_record_data_for_seeds,
                 TokenOwnerRecordV2, TOKEN_OWNER_RECORD_LAYOUT_VERSION,
             },
         },
-               tools::{
+        tools::{
             spl_token::{
                 get_spl_token_mint, is_spl_token_account, is_spl_token_mint, mint_spl_tokens_to,
                 transfer_spl_tokens,
             },
-            token2022::{ // Assuming token2022 tools are similarly structured to spl_token
+            token2022::{
                 get_token2022_mint, is_token2022_account, is_token2022_mint, mint_token2022_to,
                 transfer_token2022,
             },
@@ -33,12 +33,18 @@ use {
     spl_governance_tools::account::create_and_serialize_account_signed,
 };
 
+/// Enum to represent different token types
+enum TokenType {
+    SPL,
+    Token2022,
+}
+
 /// Processes DepositGoverningTokens instruction
 pub fn process_deposit_governing_tokens(
     program_id: &Pubkey,
     accounts: &[AccountInfo],
     amount: u64,
-     token_type: TokenType, 
+    token_type: TokenType,
 ) -> ProgramResult {
     let account_info_iter = &mut accounts.iter();
 
@@ -56,11 +62,12 @@ pub fn process_deposit_governing_tokens(
     let rent = Rent::get()?;
 
     let realm_data = get_realm_data(program_id, realm_info)?;
-let governing_token_mint = match token_type {
+    let governing_token_mint = match token_type {
         TokenType::SPL => get_spl_token_mint(governing_token_holding_info)?,
         TokenType::Token2022 => get_token2022_mint(governing_token_holding_info)?,
     };
-    realm_data.assert_is_valid_governing_token_mint_and_holding(
+
+    assert_is_valid_governing_token_mint_and_holding(
         program_id,
         realm_info.key,
         &governing_token_mint,
@@ -70,7 +77,7 @@ let governing_token_mint = match token_type {
     let realm_config_data =
         get_realm_config_data_for_realm(program_id, realm_config_info, realm_info.key)?;
 
-    realm_config_data.assert_can_deposit_governing_token(&realm_data, &governing_token_mint)?;
+    assert_can_deposit_governing_token(&realm_data, &governing_token_mint)?;
 
     match token_type {
         TokenType::SPL => {
@@ -165,14 +172,10 @@ let governing_token_mint = match token_type {
         token_owner_record_data.governing_token_deposit_amount = token_owner_record_data
             .governing_token_deposit_amount
             .checked_add(amount)
-            .unwrap();
+            .ok_or(GovernanceError::NumericalOverflow)?;
 
         token_owner_record_data.serialize(&mut token_owner_record_info.data.borrow_mut()[..])?;
     }
 
     Ok(())
-}
-enum TokenType {
-    SPL,
-    Token2022,
 }
