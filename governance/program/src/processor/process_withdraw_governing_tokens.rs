@@ -4,10 +4,12 @@ use {
     crate::{
         error::GovernanceError,
         state::{
+            enums::GovernanceAccountType,
             realm::{get_realm_address_seeds, get_realm_data},
             realm_config::get_realm_config_data_for_realm,
             token_owner_record::{
                 get_token_owner_record_address_seeds, get_token_owner_record_data_for_seeds,
+                TokenOwnerRecordV2, TOKEN_OWNER_RECORD_LAYOUT_VERSION,
             },
         },
         tools::spl_token::{get_spl_token_mint, transfer_spl_tokens_signed},
@@ -25,6 +27,7 @@ use {
 pub fn process_withdraw_governing_tokens(
     program_id: &Pubkey,
     accounts: &[AccountInfo],
+    clock: &Clock,
 ) -> ProgramResult {
     let account_info_iter = &mut accounts.iter();
 
@@ -35,7 +38,6 @@ pub fn process_withdraw_governing_tokens(
     let token_owner_record_info = next_account_info(account_info_iter)?; // 4
     let spl_token_info = next_account_info(account_info_iter)?; // 5
     let realm_config_info = next_account_info(account_info_iter)?; // 6
-    let clock = Clock::get()?;
 
     if !governing_token_owner_info.is_signer {
         return Err(GovernanceError::GoverningTokenOwnerMustSign.into());
