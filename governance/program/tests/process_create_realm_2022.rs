@@ -13,7 +13,7 @@ use {
 #[tokio::test]
 async fn test_create_realm() {
     // Arrange
-    let mut governance_test = GovernanceProgramTest::start_new().await;
+    let mut governance_test = GovernanceProgramTest::start_new_with_token_2022().await;
 
     // Act
     let realm_cookie = governance_test.with_realm().await;
@@ -27,10 +27,11 @@ async fn test_create_realm() {
 }
 
 
+
 #[tokio::test]
 async fn test_create_realm_with_non_default_config() {
     // Arrange
-    let mut governance_test = GovernanceProgramTest::start_new().await;
+    let mut governance_test = GovernanceProgramTest::start_new_with_token_2022().await;
 
     let realm_setup_args = RealmSetupArgs {
         use_council_mint: false,
@@ -57,7 +58,7 @@ async fn test_create_realm_with_non_default_config() {
 #[tokio::test]
 async fn test_create_realm_with_max_voter_weight_absolute_value() {
     // Arrange
-    let mut governance_test = GovernanceProgramTest::start_new().await;
+    let mut governance_test = GovernanceProgramTest::start_new_with_token_2022().await;
 
     let realm_setup_args = RealmSetupArgs {
         community_mint_max_voter_weight_source: MintMaxVoterWeightSource::Absolute(1),
@@ -84,11 +85,10 @@ async fn test_create_realm_with_max_voter_weight_absolute_value() {
     );
 }
 
-
 #[tokio::test]
 async fn test_create_realm_for_existing_pda() {
     // Arrange
-    let mut governance_test = GovernanceProgramTest::start_new().await;
+    let mut governance_test = GovernanceProgramTest::start_new_with_token_2022().await;
 
     let realm_name = format!("Realm #{}", governance_test.next_realm_id).to_string();
     let realm_address = get_realm_address(&governance_test.program_id, &realm_name);

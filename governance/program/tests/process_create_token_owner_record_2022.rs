@@ -11,7 +11,7 @@ use {
 #[tokio::test]
 async fn test_create_token_owner_record() {
     // Arrange
-    let mut governance_test = GovernanceProgramTest::start_new().await;
+    let mut governance_test = GovernanceProgramTest::start_new_with_token_2022().await;
     let realm_cookie = governance_test.with_realm().await;
 
     // Act

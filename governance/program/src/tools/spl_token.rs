@@ -18,7 +18,7 @@ use {
     spl_token::{
         instruction::{set_authority, AuthorityType},
         state::{Account, Mint},
-    },
+    }
 };
 
 /// Creates and initializes SPL token account with PDA using the provided PDA
@@ -36,12 +36,23 @@ pub fn create_spl_token_account_signed<'a>(
     rent_sysvar_info: &AccountInfo<'a>,
     rent: &Rent,
 ) -> Result<(), ProgramError> {
+    //Define the spl_token_id to normal token
+    let mut token_program_id = &spl_token::id();
+    let token_2022_pubkey = spl_token_2022::id();
+    //Check if the spl_token_mint owner belongs to normal token or token2022 else give an error
+    if token_mint_info.owner != &spl_token::id() && token_mint_info.owner != &spl_token_2022::id(){
+        return Err(GovernanceError::SplTokenMintWithInvalidOwner.into());
+    }
+    //Check if spl_token_mint owner belongs to token 2022 then reassign it to token 2022
+    if token_mint_info.owner == &spl_token_2022::id(){
+        token_program_id = &token_2022_pubkey;
+    }
     let create_account_instruction = system_instruction::create_account(
         payer_info.key,
         token_account_info.key,
         1.max(rent.minimum_balance(spl_token::state::Account::get_packed_len())),
         spl_token::state::Account::get_packed_len() as u64,
-        &spl_token::id(),
+        token_program_id,
     );
 
     let (account_address, bump_seed) =
@@ -71,7 +82,7 @@ pub fn create_spl_token_account_signed<'a>(
     )?;
 
     let initialize_account_instruction = spl_token::instruction::initialize_account(
-        &spl_token::id(),
+        token_program_id,
         token_account_info.key,
         token_mint_info.key,
         token_account_owner_info.key,
@@ -100,8 +111,20 @@ pub fn transfer_spl_tokens<'a>(
     amount: u64,
     spl_token_info: &AccountInfo<'a>,
 ) -> ProgramResult {
+    //Define the spl_token_id to normal token
+    let mut token_program_id = &spl_token::id();
+    let token_2022_pubkey = spl_token_2022::id();
+    //Check if the spl_token_mint owner belongs to normal token or token2022 else give an error
+    if spl_token_info.key != &spl_token::id() && spl_token_info.key != &spl_token_2022::id(){
+        return Err(GovernanceError::SplTokenMintWithInvalidOwner.into());
+    }
+    //Check if spl_token_mint owner belongs to token 2022 then reassign it to token 2022
+    if spl_token_info.key == &spl_token_2022::id(){
+        token_program_id = &token_2022_pubkey;
+    }
+
     let transfer_instruction = spl_token::instruction::transfer(
-        &spl_token::id(),
+        token_program_id,
         source_info.key,
         destination_info.key,
         authority_info.key,
@@ -131,8 +154,19 @@ pub fn mint_spl_tokens_to<'a>(
     amount: u64,
     spl_token_info: &AccountInfo<'a>,
 ) -> ProgramResult {
+    //Define the spl_token_id to normal token
+    let mut token_program_id = &spl_token::id();
+    let token_2022_pubkey = spl_token_2022::id();
+    //Check if the spl_token_mint owner belongs to normal token or token2022 else give an error
+    if mint_info.owner != &spl_token::id() && mint_info.owner != &spl_token_2022::id(){
+        return Err(GovernanceError::SplTokenMintWithInvalidOwner.into());
+    }
+    //Check if spl_token_mint owner belongs to token 2022 then reassign it to token 2022
+    if mint_info.owner == &spl_token_2022::id(){
+        token_program_id = &token_2022_pubkey;
+    }
     let mint_to_ix = spl_token::instruction::mint_to(
-        &spl_token::id(),
+        token_program_id,
         mint_info.key,
         destination_info.key,
         mint_authority_info.key,
@@ -165,6 +199,18 @@ pub fn transfer_spl_tokens_signed<'a>(
     amount: u64,
     spl_token_info: &AccountInfo<'a>,
 ) -> ProgramResult {
+    //Define the spl_token_id to normal token
+    let mut token_program_id = &spl_token::id();
+    let token_2022_pubkey = spl_token_2022::id();
+    //Check if the spl_token_mint owner belongs to normal token or token2022 else give an error
+    if spl_token_info.key != &spl_token::id() && spl_token_info.key != &spl_token_2022::id(){
+        return Err(GovernanceError::SplTokenMintWithInvalidOwner.into());
+    }
+    //Check if spl_token_mint owner belongs to token 2022 then reassign it to token 2022
+    if spl_token_info.key == &spl_token_2022::id(){
+        token_program_id = &token_2022_pubkey;
+    }
+
     let (authority_address, bump_seed) = Pubkey::find_program_address(authority_seeds, program_id);
 
     if authority_address != *authority_info.key {
@@ -177,7 +223,7 @@ pub fn transfer_spl_tokens_signed<'a>(
     }
 
     let transfer_instruction = spl_token::instruction::transfer(
-        &spl_token::id(),
+        token_program_id,
         source_info.key,
         destination_info.key,
         authority_info.key,
@@ -215,6 +261,17 @@ pub fn burn_spl_tokens_signed<'a>(
     amount: u64,
     spl_token_info: &AccountInfo<'a>,
 ) -> ProgramResult {
+    //Define the spl_token_id to normal token
+    let mut token_program_id = &spl_token::id();
+    let token_2022_pubkey = spl_token_2022::id();
+    //Check if the spl_token_mint owner belongs to normal token or token2022 else give an error
+    if token_mint_info.owner != &spl_token::id() && token_mint_info.owner != &spl_token_2022::id(){
+        return Err(GovernanceError::SplTokenMintWithInvalidOwner.into());
+    }
+    //Check if spl_token_mint owner belongs to token 2022 then reassign it to token 2022
+    if token_mint_info.owner == &spl_token_2022::id(){
+        token_program_id = &token_2022_pubkey;
+    }
     let (authority_address, bump_seed) = Pubkey::find_program_address(authority_seeds, program_id);
 
     if authority_address != *authority_info.key {
@@ -227,7 +284,7 @@ pub fn burn_spl_tokens_signed<'a>(
     }
 
     let burn_ix = spl_token::instruction::burn(
-        &spl_token::id(),
+        token_program_id,
         token_account_info.key,
         token_mint_info.key,
         authority_info.key,
@@ -261,7 +318,7 @@ pub fn assert_is_valid_spl_token_account(account_info: &AccountInfo) -> Result<(
         return Err(GovernanceError::SplTokenAccountDoesNotExist.into());
     }
 
-    if account_info.owner != &spl_token::id() {
+    if account_info.owner != &spl_token::id() && account_info.owner != &spl_token_2022::id() {
         return Err(GovernanceError::SplTokenAccountWithInvalidOwner.into());
     }
 
@@ -298,7 +355,7 @@ pub fn assert_is_valid_spl_token_mint(mint_info: &AccountInfo) -> Result<(), Pro
         return Err(GovernanceError::SplTokenMintDoesNotExist.into());
     }
 
-    if mint_info.owner != &spl_token::id() {
+    if mint_info.owner != &spl_token::id() && mint_info.owner != &spl_token_2022::id() {
         return Err(GovernanceError::SplTokenMintWithInvalidOwner.into());
     }
 
@@ -419,8 +476,19 @@ pub fn set_spl_token_account_authority<'a>(
     authority_type: AuthorityType,
     spl_token_info: &AccountInfo<'a>,
 ) -> Result<(), ProgramError> {
+    //Define the spl_token_id to normal token
+    let mut token_program_id = &spl_token::id();
+    let token_2022_pubkey = spl_token_2022::id();
+    //Check if the spl_token_mint owner belongs to normal token or token2022 else give an error
+    if spl_token_info.key != &spl_token::id() && spl_token_info.key != &spl_token_2022::id(){
+        return Err(GovernanceError::SplTokenMintWithInvalidOwner.into());
+    }
+    //Check if spl_token_mint owner belongs to token 2022 then reassign it to token 2022
+    if spl_token_info.key == &spl_token_2022::id(){ 
+        token_program_id = &token_2022_pubkey;
+    }
     let set_authority_ix = set_authority(
-        &spl_token::id(),
+        token_program_id,
         account_info.key,
         Some(new_account_authority),
         authority_type,
