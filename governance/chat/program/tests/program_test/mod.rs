@@ -37,23 +37,39 @@ pub struct GovernanceChatProgramTest {
     pub program_id: Pubkey,
     pub governance_program_id: Pubkey,
     pub voter_weight_addin_id: Option<Pubkey>,
+    pub token_program_id: Pubkey
 }
 
 impl GovernanceChatProgramTest {
     #[allow(dead_code)]
     pub async fn start_new() -> Self {
-        Self::start_impl(false).await
+        Self::start_impl(false,false).await
+    }
+    #[allow(dead_code)]
+    pub async fn start_new_with_token_2022() -> Self {
+        Self::start_impl(false,true).await
     }
 
     #[allow(dead_code)]
     pub async fn start_with_voter_weight_addin() -> Self {
         ensure_addin_mock_is_built();
-        Self::start_impl(true).await
+        Self::start_impl(true,false).await
+    }
+    #[allow(dead_code)]
+    pub async fn start_with_voter_weight_addin_with_token_2022() -> Self {
+        ensure_addin_mock_is_built();
+        Self::start_impl(true,true).await
     }
 
     #[allow(dead_code)]
-    async fn start_impl(use_voter_weight_addin: bool) -> Self {
+    async fn start_impl(use_voter_weight_addin: bool,with_token_2022:bool) -> Self {
         let mut program_test = ProgramTest::default();
+
+         //Default that it is normal token
+         let mut token_program_id = spl_token::id();
+         if with_token_2022 {
+             token_program_id = spl_token_2022::id();
+         }
 
         let program_id = Pubkey::from_str("GovernanceChat11111111111111111111111111111").unwrap();
         program_test.add_program(
@@ -86,6 +102,7 @@ impl GovernanceChatProgramTest {
             program_id,
             governance_program_id,
             voter_weight_addin_id,
+            token_program_id
         }
     }
 
@@ -104,6 +121,7 @@ impl GovernanceChatProgramTest {
                 &governing_token_mint_keypair,
                 &governing_token_mint_authority.pubkey(),
                 None,
+                Some(&self.token_program_id)
             )
             .await;
 
@@ -126,6 +144,7 @@ impl GovernanceChatProgramTest {
             name.clone(),
             1,
             MintMaxVoterWeightSource::FULL_SUPPLY_FRACTION,
+            Some(&self.token_program_id)
         );
 
         self.bench
@@ -149,6 +168,7 @@ impl GovernanceChatProgramTest {
                     amount,
                     &token_owner,
                     &transfer_authority.pubkey(),
+                    Some(&self.token_program_id)
                 )
                 .await;
 
@@ -161,6 +181,7 @@ impl GovernanceChatProgramTest {
                 &self.bench.payer.pubkey(),
                 amount,
                 &governing_token_mint_keypair.pubkey(),
+                Some(&self.token_program_id)
             );
 
             self.bench
@@ -323,6 +344,7 @@ impl GovernanceChatProgramTest {
                 deposit_amount,
                 &token_owner,
                 &transfer_authority.pubkey(),
+                Some(&self.token_program_id)
             )
             .await;
 
@@ -335,6 +357,7 @@ impl GovernanceChatProgramTest {
             &self.bench.payer.pubkey(),
             deposit_amount,
             &proposal_cookie.governing_token_mint,
+            Some(&self.token_program_id)
         );
 
         self.bench
