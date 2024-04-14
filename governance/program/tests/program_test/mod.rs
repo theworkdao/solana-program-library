@@ -116,33 +116,51 @@ pub struct GovernanceProgramTest {
     pub program_id: Pubkey,
     pub voter_weight_addin_id: Option<Pubkey>,
     pub max_voter_weight_addin_id: Option<Pubkey>,
+    pub token_program_id:Pubkey
 }
 
 impl GovernanceProgramTest {
     #[allow(dead_code)]
+    pub async fn start_new_with_token_2022() -> Self {
+        Self::start_impl(false, false,true).await
+    }
+    #[allow(dead_code)]
     pub async fn start_new() -> Self {
-        Self::start_impl(false, false).await
+        Self::start_impl(false, false,false).await
     }
 
+    #[allow(dead_code)]
+    pub async fn start_with_voter_weight_addin_with_token_2022() -> Self {
+        Self::start_with_addin_mock(true, false,true).await
+    }
     #[allow(dead_code)]
     pub async fn start_with_voter_weight_addin() -> Self {
-        Self::start_with_addin_mock(true, false).await
+        Self::start_with_addin_mock(true, false,false).await
     }
 
+    #[allow(dead_code)]
+    pub async fn start_with_max_voter_weight_addin_with_token_2022() -> Self {
+        Self::start_with_addin_mock(false, true,true).await
+    }
     #[allow(dead_code)]
     pub async fn start_with_max_voter_weight_addin() -> Self {
-        Self::start_with_addin_mock(false, true).await
+        Self::start_with_addin_mock(false, true,false).await
     }
 
     #[allow(dead_code)]
+    pub async fn start_with_all_addins_with_token_2022() -> Self {
+        Self::start_with_addin_mock(true, true,true).await
+    }
+    #[allow(dead_code)]
     pub async fn start_with_all_addins() -> Self {
-        Self::start_with_addin_mock(true, true).await
+        Self::start_with_addin_mock(true, true,false).await
     }
 
     #[allow(dead_code)]
     pub async fn start_with_addin_mock(
         use_voter_weight_addin: bool,
         use_max_voter_weight_addin: bool,
+        with_token_2022:bool
     ) -> Self {
         // We only ensure the addin mock program is built but it doesn't detect
         // changes.
@@ -153,13 +171,22 @@ impl GovernanceProgramTest {
         // executed from the script.
         ensure_addin_mock_is_built();
 
-        Self::start_impl(use_voter_weight_addin, use_max_voter_weight_addin).await
+        Self::start_impl(use_voter_weight_addin, use_max_voter_weight_addin,with_token_2022).await
     }
 
     #[allow(dead_code)]
-    async fn start_impl(use_voter_weight_addin: bool, use_max_voter_weight_addin: bool) -> Self {
+    async fn start_impl(use_voter_weight_addin: bool, use_max_voter_weight_addin: bool,with_token_2022:bool) -> Self {
         let mut program_test = ProgramTest::default();
-
+        // //Default that it is normal token
+        // let mut token_program_id = Pubkey::from_str("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
+        // if with_token_2022 {
+        //     token_program_id = Pubkey::from_str("TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb");
+        // }
+         //Default that it is normal token
+         let mut token_program_id = spl_token::id();
+         if with_token_2022 {
+             token_program_id = spl_token_2022::id();
+         }
         let program_id = Pubkey::from_str("Governance111111111111111111111111111111111").unwrap();
         program_test.add_program(
             "spl_governance",
@@ -195,6 +222,7 @@ impl GovernanceProgramTest {
             program_id,
             voter_weight_addin_id,
             max_voter_weight_addin_id,
+            token_program_id
         }
     }
 
@@ -262,6 +290,7 @@ impl GovernanceProgramTest {
                 &community_token_mint_keypair,
                 &community_token_mint_authority.pubkey(),
                 None,
+                Some(&self.token_program_id)
             )
             .await;
 
@@ -284,6 +313,7 @@ impl GovernanceProgramTest {
                     &council_token_mint_keypair,
                     &council_token_mint_authority.pubkey(),
                     None,
+                    Some(&self.token_program_id)
                 )
                 .await;
 
@@ -337,6 +367,7 @@ impl GovernanceProgramTest {
             realm_setup_args
                 .community_mint_max_voter_weight_source
                 .clone(),
+            Some(&self.token_program_id)
         );
 
         self.bench
@@ -442,6 +473,7 @@ impl GovernanceProgramTest {
             name.clone(),
             min_community_weight_to_create_governance,
             community_mint_max_voter_weight_source,
+            Some(&self.token_program_id)
         );
 
         self.bench
@@ -779,6 +811,7 @@ impl GovernanceProgramTest {
                 amount,
                 &token_owner,
                 &transfer_authority.pubkey(),
+                Some(&self.token_program_id)
             )
             .await;
 
@@ -791,6 +824,7 @@ impl GovernanceProgramTest {
             &self.bench.payer.pubkey(),
             amount,
             governing_mint,
+            Some(&self.token_program_id)
         );
 
         self.bench
@@ -856,6 +890,7 @@ impl GovernanceProgramTest {
             &self.bench.payer.pubkey(),
             amount,
             governing_mint,
+            Some(&self.token_program_id)
         );
 
         self.bench
@@ -912,6 +947,7 @@ impl GovernanceProgramTest {
                 &token_account_keypair,
                 &realm_cookie.account.community_mint,
                 &self.bench.payer.pubkey(),
+                Some(&self.token_program_id)
             )
             .await;
 
@@ -921,6 +957,7 @@ impl GovernanceProgramTest {
                 &realm_cookie.community_mint_authority,
                 &token_account_keypair.pubkey(),
                 amount,
+                Some(&self.token_program_id)
             )
             .await;
     }
@@ -935,6 +972,7 @@ impl GovernanceProgramTest {
                 &token_account_keypair,
                 &council_mint,
                 &self.bench.payer.pubkey(),
+                Some(&self.token_program_id)
             )
             .await;
 
@@ -944,6 +982,7 @@ impl GovernanceProgramTest {
                 realm_cookie.council_mint_authority.as_ref().unwrap(),
                 &token_account_keypair.pubkey(),
                 amount,
+                Some(&self.token_program_id)
             )
             .await;
     }
@@ -975,6 +1014,7 @@ impl GovernanceProgramTest {
             &self.bench.payer.pubkey(),
             amount,
             governing_token_mint,
+            Some(&self.token_program_id)
         );
 
         self.bench
@@ -1269,6 +1309,7 @@ impl GovernanceProgramTest {
             &token_owner_record_cookie.token_source,
             &governing_token_owner.pubkey(),
             governing_token_mint,
+            Some(&self.token_program_id)
         );
 
         self.bench
@@ -1338,6 +1379,7 @@ impl GovernanceProgramTest {
             governing_token_mint,
             &revoke_authority.pubkey(),
             amount,
+            Some(&self.token_program_id)
         );
 
         instruction_override(&mut revoke_governing_tokens_ix);
@@ -1358,7 +1400,10 @@ impl GovernanceProgramTest {
         let mint_keypair = Keypair::new();
 
         self.bench
-            .create_mint(&mint_keypair, &governance_cookie.address, None)
+            .create_mint(&mint_keypair, 
+                &governance_cookie.address,
+                 None,
+                 Some(&self.token_program_id))
             .await;
 
         GovernedMintCookie {
@@ -1376,7 +1421,10 @@ impl GovernanceProgramTest {
         let mint_authority = Keypair::new();
 
         self.bench
-            .create_mint(&mint_keypair, &mint_authority.pubkey(), None)
+            .create_mint(&mint_keypair, 
+                &mint_authority.pubkey(),
+                 None,
+                 Some(&self.token_program_id))
             .await;
 
         let token_account_keypair = Keypair::new();
@@ -1387,6 +1435,7 @@ impl GovernanceProgramTest {
                 &token_account_keypair,
                 &mint_keypair.pubkey(),
                 &token_account_owner,
+                Some(&self.token_program_id)
             )
             .await;
 
@@ -1396,6 +1445,7 @@ impl GovernanceProgramTest {
                 &mint_authority,
                 &token_account_keypair.pubkey(),
                 100,
+                Some(&self.token_program_id)
             )
             .await;
 
@@ -2233,11 +2283,12 @@ impl GovernanceProgramTest {
                 &token_account_keypair,
                 &governed_mint_cookie.address,
                 &self.bench.payer.pubkey(),
+                Some(&self.token_program_id)
             )
             .await;
 
         let mut instruction = spl_token::instruction::mint_to(
-            &spl_token::id(),
+            &token_program_id,
             &governed_mint_cookie.address,
             &token_account_keypair.pubkey(),
             &proposal_cookie.account.governance,
@@ -2270,11 +2321,12 @@ impl GovernanceProgramTest {
                 &token_account_keypair,
                 &governed_token_account_cookie.token_mint,
                 &self.bench.payer.pubkey(),
+                Some(&self.token_program_id)
             )
             .await;
 
         let mut instruction = spl_token::instruction::transfer(
-            &spl_token::id(),
+            &self.token_program_id,
             &governed_token_account_cookie.address,
             &token_account_keypair.pubkey(),
             &proposal_cookie.account.governance,
