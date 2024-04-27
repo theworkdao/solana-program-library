@@ -15,11 +15,20 @@ use {
         rent::Rent,
         system_instruction,
     },
-    spl_token::{
-        instruction::{set_authority, AuthorityType},
+    spl_token_2022::{
+        cmp_pubkeys,
+        instruction::AuthorityType,
         state::{Account, Mint},
     },
 };
+
+/// Checks if the provided spl_token_program is spl token 2022
+pub fn is_spl_token_2022(spl_token_program_id: &Pubkey) -> bool {
+    if cmp_pubkeys(spl_token_program_id, &spl_token::id()) {
+        return false;
+    }
+    return true;
+}
 
 /// Creates and initializes SPL token account with PDA using the provided PDA
 /// seeds
@@ -36,12 +45,13 @@ pub fn create_spl_token_account_signed<'a>(
     rent_sysvar_info: &AccountInfo<'a>,
     rent: &Rent,
 ) -> Result<(), ProgramError> {
+    let spl_token_program_id = &get_spl_token_program_id(spl_token_info);
     let create_account_instruction = system_instruction::create_account(
         payer_info.key,
         token_account_info.key,
-        1.max(rent.minimum_balance(spl_token::state::Account::get_packed_len())),
-        spl_token::state::Account::get_packed_len() as u64,
-        &spl_token::id(),
+        1.max(rent.minimum_balance(spl_token_2022::state::Account::get_packed_len())),
+        spl_token_2022::state::Account::get_packed_len() as u64,
+        spl_token_program_id,
     );
 
     let (account_address, bump_seed) =
@@ -70,8 +80,8 @@ pub fn create_spl_token_account_signed<'a>(
         &[&signers_seeds[..]],
     )?;
 
-    let initialize_account_instruction = spl_token::instruction::initialize_account(
-        &spl_token::id(),
+    let initialize_account_instruction = spl_token_2022::instruction::initialize_account(
+        spl_token_program_id,
         token_account_info.key,
         token_mint_info.key,
         token_account_owner_info.key,
@@ -100,8 +110,11 @@ pub fn transfer_spl_tokens<'a>(
     amount: u64,
     spl_token_info: &AccountInfo<'a>,
 ) -> ProgramResult {
-    let transfer_instruction = spl_token::instruction::transfer(
-        &spl_token::id(),
+    let spl_token_program_id = &get_spl_token_program_id(spl_token_info);
+    // for previous instruction compatibility we do not use transfer_checked() here.
+    #[allow(deprecated)]
+    let transfer_instruction = spl_token_2022::instruction::transfer(
+        spl_token_program_id,
         source_info.key,
         destination_info.key,
         authority_info.key,
@@ -131,8 +144,10 @@ pub fn mint_spl_tokens_to<'a>(
     amount: u64,
     spl_token_info: &AccountInfo<'a>,
 ) -> ProgramResult {
-    let mint_to_ix = spl_token::instruction::mint_to(
-        &spl_token::id(),
+    let spl_token_program_id = &get_spl_token_program_id(spl_token_info);
+
+    let mint_to_ix = spl_token_2022::instruction::mint_to(
+        spl_token_program_id,
         mint_info.key,
         destination_info.key,
         mint_authority_info.key,
@@ -176,8 +191,11 @@ pub fn transfer_spl_tokens_signed<'a>(
         return Err(ProgramError::InvalidSeeds);
     }
 
-    let transfer_instruction = spl_token::instruction::transfer(
-        &spl_token::id(),
+    let spl_token_program_id = &get_spl_token_program_id(spl_token_info);
+    // for previous instruction compatibility we do not use transfer_checked() here.
+    #[allow(deprecated)]
+    let transfer_instruction = spl_token_2022::instruction::transfer(
+        spl_token_program_id,
         source_info.key,
         destination_info.key,
         authority_info.key,
@@ -226,8 +244,9 @@ pub fn burn_spl_tokens_signed<'a>(
         return Err(ProgramError::InvalidSeeds);
     }
 
-    let burn_ix = spl_token::instruction::burn(
-        &spl_token::id(),
+    let spl_token_program_id = &get_spl_token_program_id(spl_token_info);
+    let burn_ix = spl_token_2022::instruction::burn(
+        spl_token_program_id,
         token_account_info.key,
         token_mint_info.key,
         authority_info.key,
@@ -261,10 +280,11 @@ pub fn assert_is_valid_spl_token_account(account_info: &AccountInfo) -> Result<(
         return Err(GovernanceError::SplTokenAccountDoesNotExist.into());
     }
 
-    if account_info.owner != &spl_token::id() {
+    if account_info.owner != &spl_token_2022::id() && account_info.owner != &spl_token::id() {
         return Err(GovernanceError::SplTokenAccountWithInvalidOwner.into());
     }
 
+    // length might be invalid for tokens with extension types.
     if account_info.data_len() != Account::LEN {
         return Err(GovernanceError::SplTokenInvalidTokenAccountData.into());
     }
@@ -298,10 +318,11 @@ pub fn assert_is_valid_spl_token_mint(mint_info: &AccountInfo) -> Result<(), Pro
         return Err(GovernanceError::SplTokenMintDoesNotExist.into());
     }
 
-    if mint_info.owner != &spl_token::id() {
-        return Err(GovernanceError::SplTokenMintWithInvalidOwner.into());
+    if mint_info.owner != &spl_token_2022::id() && mint_info.owner != &spl_token::id() {
+        return Err(GovernanceError::SplTokenAccountWithInvalidOwner.into());
     }
 
+    // length might be invalid for mints with extension types.
     if mint_info.data_len() != Mint::LEN {
         return Err(GovernanceError::SplTokenInvalidMintAccountData.into());
     }
@@ -419,8 +440,9 @@ pub fn set_spl_token_account_authority<'a>(
     authority_type: AuthorityType,
     spl_token_info: &AccountInfo<'a>,
 ) -> Result<(), ProgramError> {
-    let set_authority_ix = set_authority(
-        &spl_token::id(),
+    let spl_token_program_id = &get_spl_token_program_id(spl_token_info);
+    let set_authority_ix = spl_token_2022::instruction::set_authority(
+        spl_token_program_id,
         account_info.key,
         Some(new_account_authority),
         authority_type,
@@ -438,4 +460,12 @@ pub fn set_spl_token_account_authority<'a>(
     )?;
 
     Ok(())
+}
+
+fn get_spl_token_program_id(spl_token_info: &AccountInfo) -> Pubkey {
+    if is_spl_token_2022(spl_token_info.key) {
+        spl_token_2022::id()
+    } else {
+        spl_token::id()
+    }
 }

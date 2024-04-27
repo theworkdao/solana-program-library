@@ -160,8 +160,11 @@ pub struct RealmV2 {
     /// Configuration of the Realm
     pub config: RealmConfig,
 
+    /// Check if Governing Token is spl_token_22
+    pub is_token_2022: bool,
+    
     /// Reserved space for future versions
-    pub reserved: [u8; 6],
+    pub reserved: [u8; 5],
 
     /// Legacy field not used since program V3 any longer
     /// Note: If the field is going to be reused in future version it must be
@@ -359,6 +362,7 @@ impl RealmV2 {
                 account_type: self.account_type,
                 community_mint: self.community_mint,
                 config: self.config,
+                is_token_2022: false,
                 reserved: self.reserved,
                 voting_proposal_count: 0,
                 authority: self.authority,
@@ -396,6 +400,8 @@ pub fn get_realm_data(
             account_type,
             community_mint: realm_data_v1.community_mint,
             config: realm_data_v1.config,
+            // realm_v1 is always false
+            is_token_2022: false,
             reserved: realm_data_v1.reserved,
             legacy1: 0,
             authority: realm_data_v1.authority,
@@ -509,7 +515,8 @@ mod test {
         let realm = RealmV2 {
             account_type: GovernanceAccountType::RealmV2,
             community_mint: Pubkey::new_unique(),
-            reserved: [0; 6],
+            is_token_2022: false,
+            reserved: [0; 5],
 
             authority: Some(Pubkey::new_unique()),
             name: "test-realm".to_string(),

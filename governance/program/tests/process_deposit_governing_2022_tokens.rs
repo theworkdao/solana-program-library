@@ -18,14 +18,14 @@ use {
 };
 
 #[tokio::test]
-async fn test_deposit_initial_community_tokens() {
+async fn test_deposit_initial_community_2022_tokens() {
     // Arrange
     let mut governance_test = GovernanceProgramTest::start_new().await;
-    let realm_cookie = governance_test.with_realm().await;
+    let realm_cookie = governance_test.with_realm_token_2022().await;
 
     // Act
     let token_owner_record_cookie = governance_test
-        .with_community_token_deposit(&realm_cookie)
+        .with_community_2022_token_deposit(&realm_cookie)
         .await
         .unwrap();
 
@@ -66,16 +66,16 @@ async fn test_deposit_initial_community_tokens() {
 }
 
 #[tokio::test]
-async fn test_deposit_initial_council_tokens() {
+async fn test_deposit_initial_council_2022_tokens() {
     // Arrange
     let mut governance_test = GovernanceProgramTest::start_new().await;
-    let realm_cookie = governance_test.with_realm().await;
+    let realm_cookie = governance_test.with_realm_token_2022().await;
 
     let council_token_holding_account = realm_cookie.council_token_holding_account.unwrap();
 
     // Act
     let token_owner_record_cookie = governance_test
-        .with_council_token_deposit(&realm_cookie)
+        .with_council_token_deposit_2022(&realm_cookie)
         .await
         .unwrap();
 
@@ -85,6 +85,7 @@ async fn test_deposit_initial_council_tokens() {
         .await;
 
     assert_eq!(token_owner_record_cookie.account, token_owner_record);
+
 
     let source_account = governance_test
         .get_token_account(&token_owner_record_cookie.token_source)
@@ -109,13 +110,13 @@ async fn test_deposit_initial_council_tokens() {
 }
 
 #[tokio::test]
-async fn test_deposit_subsequent_community_tokens() {
+async fn test_deposit_subsequent_community_2022_tokens() {
     // Arrange
     let mut governance_test = GovernanceProgramTest::start_new().await;
-    let realm_cookie = governance_test.with_realm().await;
+    let realm_cookie = governance_test.with_realm_token_2022().await;
 
     let token_owner_record_cookie = governance_test
-        .with_community_token_deposit(&realm_cookie)
+        .with_community_2022_token_deposit(&realm_cookie)
         .await
         .unwrap();
 
@@ -129,7 +130,7 @@ async fn test_deposit_subsequent_community_tokens() {
 
     // Act
     governance_test
-        .with_subsequent_community_token_deposit(
+        .with_subsequent_community_token_2022_deposit(
             &realm_cookie,
             &token_owner_record_cookie,
             deposit_amount,
@@ -154,15 +155,15 @@ async fn test_deposit_subsequent_community_tokens() {
 }
 
 #[tokio::test]
-async fn test_deposit_subsequent_council_tokens() {
+async fn test_deposit_subsequent_council_2022_tokens() {
     // Arrange
     let mut governance_test = GovernanceProgramTest::start_new().await;
-    let realm_cookie = governance_test.with_realm().await;
+    let realm_cookie = governance_test.with_realm_token_2022().await;
 
     let council_token_holding_account = realm_cookie.council_token_holding_account.unwrap();
 
     let token_owner_record_cookie = governance_test
-        .with_council_token_deposit(&realm_cookie)
+        .with_council_token_deposit_2022(&realm_cookie)
         .await
         .unwrap();
 
@@ -176,7 +177,7 @@ async fn test_deposit_subsequent_council_tokens() {
 
     // Act
     governance_test
-        .with_subsequent_council_token_deposit(
+        .with_subsequent_council_token_deposit_2022(
             &realm_cookie,
             &token_owner_record_cookie,
             deposit_amount,
@@ -201,10 +202,10 @@ async fn test_deposit_subsequent_council_tokens() {
 }
 
 #[tokio::test]
-async fn test_deposit_initial_community_tokens_with_owner_must_sign_error() {
+async fn test_deposit_initial_community_2022_tokens_with_owner_must_sign_error() {
     // Arrange
     let mut governance_test = GovernanceProgramTest::start_new().await;
-    let realm_cookie = governance_test.with_realm().await;
+    let realm_cookie = governance_test.with_realm_token_2022().await;
 
     let token_owner = Keypair::new();
     let transfer_authority = Keypair::new();
@@ -214,7 +215,7 @@ async fn test_deposit_initial_community_tokens_with_owner_must_sign_error() {
 
     governance_test
         .bench
-        .create_token_account_with_transfer_authority(
+        .create_token_2022_account_with_transfer_authority(
             &token_source,
             &realm_cookie.account.community_mint,
             &realm_cookie.community_mint_authority,
@@ -233,7 +234,7 @@ async fn test_deposit_initial_community_tokens_with_owner_must_sign_error() {
         &governance_test.bench.context.payer.pubkey(),
         amount,
         &realm_cookie.account.community_mint,
-        false // is_token_2022
+        true // is_token_2022
     );
 
     deposit_ix.accounts[3] = AccountMeta::new_readonly(token_owner.pubkey(), false);
@@ -252,13 +253,13 @@ async fn test_deposit_initial_community_tokens_with_owner_must_sign_error() {
 }
 
 #[tokio::test]
-async fn test_deposit_community_tokens_with_malicious_holding_account_error() {
+async fn test_deposit_community_2022_tokens_with_malicious_holding_account_error() {
     // Arrange
     let mut governance_test = GovernanceProgramTest::start_new().await;
-    let realm_cookie = governance_test.with_realm().await;
+    let realm_cookie = governance_test.with_realm_token_2022().await;
 
     let token_owner_record_cookie = governance_test
-        .with_community_token_deposit(&realm_cookie)
+        .with_community_2022_token_deposit(&realm_cookie)
         .await
         .unwrap();
 
@@ -266,7 +267,7 @@ async fn test_deposit_community_tokens_with_malicious_holding_account_error() {
 
     governance_test
         .bench
-        .mint_tokens(
+        .mint_2022_tokens(
             &realm_cookie.account.community_mint,
             &realm_cookie.community_mint_authority,
             &token_owner_record_cookie.token_source,
@@ -283,7 +284,7 @@ async fn test_deposit_community_tokens_with_malicious_holding_account_error() {
         &governance_test.bench.context.payer.pubkey(),
         amount,
         &realm_cookie.account.community_mint,
-        false // is_token_2022
+        true // is_token_2022
     );
 
     // Try to maliciously deposit to the source
@@ -309,14 +310,14 @@ async fn test_deposit_community_tokens_with_malicious_holding_account_error() {
 }
 
 #[tokio::test]
-async fn test_deposit_community_tokens_using_mint() {
+async fn test_deposit_community_2022_tokens_using_mint() {
     // Arrange
     let mut governance_test = GovernanceProgramTest::start_new().await;
-    let realm_cookie = governance_test.with_realm().await;
+    let realm_cookie = governance_test.with_realm_token_2022().await;
 
     // Act
     let token_owner_record_cookie = governance_test
-        .with_initial_governing_token_deposit_using_mint(
+        .with_initial_governing_token_deposit_using_mint_2022(
             &realm_cookie.address,
             &realm_cookie.account.community_mint,
             &realm_cookie.community_mint_authority,
@@ -345,7 +346,7 @@ async fn test_deposit_community_tokens_using_mint() {
 }
 
 #[tokio::test]
-async fn test_deposit_comunity_tokens_with_cannot_deposit_dormant_tokens_error() {
+async fn test_deposit_comunity_2022_tokens_with_cannot_deposit_dormant_tokens_error() {
     // Arrange
     let mut governance_test = GovernanceProgramTest::start_new().await;
 
@@ -353,12 +354,12 @@ async fn test_deposit_comunity_tokens_with_cannot_deposit_dormant_tokens_error()
     realm_config_args.council_token_config_args.token_type = GoverningTokenType::Dormant;
 
     let realm_cookie = governance_test
-        .with_realm_using_args(&realm_config_args)
+        .with_realm_using_args_token_2022(&realm_config_args)
         .await;
 
     // Act
     let err = governance_test
-        .with_council_token_deposit(&realm_cookie)
+        .with_council_token_deposit_2022(&realm_cookie)
         .await
         .err()
         .unwrap();

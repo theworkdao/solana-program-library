@@ -31,8 +31,12 @@ pub struct RealmV1 {
     /// Configuration of the Realm
     pub config: RealmConfig,
 
+    /// Check if Governing Token is spl_token_22
+    /// value is used in RealmV2 (should always return false in RealmV1)
+    pub is_token_2022: bool,
+    
     /// Reserved space for future versions
-    pub reserved: [u8; 6],
+    pub reserved: [u8; 5],
 
     /// The number of proposals in voting state in the Realm
     /// Note: This is field introduced in V2 but it took space from reserved

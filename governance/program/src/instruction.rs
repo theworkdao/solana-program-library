@@ -45,7 +45,7 @@ pub enum GovernanceInstruction {
     ///     The account will be created with the Realm PDA as its owner
     /// 4. `[signer]` Payer
     /// 5. `[]` System
-    /// 6. `[]` SPL Token
+    /// 6. `[]` SPL Token or SPL Token 2022 Program
     /// 7. `[]` Sysvar Rent
     /// 8. `[]` Council Token Mint - optional
     /// 9. `[writable]` Council Token Holding account - optional unless council
@@ -89,7 +89,7 @@ pub enum GovernanceInstruction {
     ///       governing_token_owner]
     ///  6. `[signer]` Payer
     ///  7. `[]` System
-    ///  8. `[]` SPL Token program
+    ///  8. `[]` SPL Token or SPL Token 2022 program
     ///  9. `[]` RealmConfig account.
     ///     * PDA seeds: ['realm-config', realm]
     DepositGoverningTokens {
@@ -114,7 +114,7 @@ pub enum GovernanceInstruction {
     ///  4. `[writable]` TokenOwnerRecord account.
     ///     * PDA seeds: ['governance',realm, governing_token_mint,
     ///       governing_token_owner]
-    ///  5. `[]` SPL Token program
+    ///  5. `[]` SPL Token or SPL Token 2022 program
     ///  6. `[]` RealmConfig account.
     ///     * PDA seeds: ['realm-config', realm]
     WithdrawGoverningTokens {},
@@ -510,7 +510,7 @@ pub enum GovernanceInstruction {
     ///                   membership
     ///  5. `[]` RealmConfig account.
     ///     * PDA seeds: ['realm-config', realm]
-    ///  6. `[]` SPL Token program
+    ///  6. `[]` SPL Token or SPL Token 2022 program
     RevokeGoverningTokens {
         /// The amount to revoke
         #[allow(dead_code)]
@@ -635,6 +635,7 @@ pub fn create_realm(
     name: String,
     min_community_weight_to_create_governance: u64,
     community_mint_max_voter_weight_source: MintMaxVoterWeightSource,
+    is_token_2022: bool,
 ) -> Instruction {
     let realm_address = get_realm_address(program_id, &name);
     let community_token_holding_address =
@@ -647,7 +648,14 @@ pub fn create_realm(
         AccountMeta::new(community_token_holding_address, false),
         AccountMeta::new(*payer, true),
         AccountMeta::new_readonly(system_program::id(), false),
-        AccountMeta::new_readonly(spl_token::id(), false),
+        AccountMeta::new_readonly(
+            if is_token_2022 {
+                spl_token_2022::id()
+            } else {
+                spl_token::id()
+            },
+            false,
+        ),
         AccountMeta::new_readonly(sysvar::rent::id(), false),
     ];
 
@@ -702,6 +710,7 @@ pub fn deposit_governing_tokens(
     // Args
     amount: u64,
     governing_token_mint: &Pubkey,
+    is_token_2022: bool,
 ) -> Instruction {
     let token_owner_record_address = get_token_owner_record_address(
         program_id,
@@ -724,7 +733,14 @@ pub fn deposit_governing_tokens(
         AccountMeta::new(token_owner_record_address, false),
         AccountMeta::new(*payer, true),
         AccountMeta::new_readonly(system_program::id(), false),
-        AccountMeta::new_readonly(spl_token::id(), false),
+        AccountMeta::new_readonly(
+            if is_token_2022 {
+                spl_token_2022::id()
+            } else {
+                spl_token::id()
+            },
+            false,
+        ),
         AccountMeta::new_readonly(realm_config_address, false),
     ];
 
@@ -746,6 +762,7 @@ pub fn withdraw_governing_tokens(
     governing_token_owner: &Pubkey,
     // Args
     governing_token_mint: &Pubkey,
+    is_token_2022: bool,
 ) -> Instruction {
     let token_owner_record_address = get_token_owner_record_address(
         program_id,
@@ -765,7 +782,14 @@ pub fn withdraw_governing_tokens(
         AccountMeta::new(*governing_token_destination, false),
         AccountMeta::new_readonly(*governing_token_owner, true),
         AccountMeta::new(token_owner_record_address, false),
-        AccountMeta::new_readonly(spl_token::id(), false),
+        AccountMeta::new_readonly(
+            if is_token_2022 {
+                spl_token_2022::id()
+            } else {
+                spl_token::id()
+            },
+            false,
+        ),
         AccountMeta::new_readonly(realm_config_address, false),
     ];
 
@@ -1499,6 +1523,7 @@ pub fn revoke_governing_tokens(
     revoke_authority: &Pubkey,
     // Args
     amount: u64,
+    is_token_2022: bool,
 ) -> Instruction {
     let token_owner_record_address = get_token_owner_record_address(
         program_id,
@@ -1519,7 +1544,14 @@ pub fn revoke_governing_tokens(
         AccountMeta::new(*governing_token_mint, false),
         AccountMeta::new_readonly(*revoke_authority, true),
         AccountMeta::new_readonly(realm_config_address, false),
-        AccountMeta::new_readonly(spl_token::id(), false),
+        AccountMeta::new_readonly(
+            if is_token_2022 {
+                spl_token_2022::id()
+            } else {
+                spl_token::id()
+            },
+            false,
+        ),
     ];
 
     let instruction = GovernanceInstruction::RevokeGoverningTokens { amount };
