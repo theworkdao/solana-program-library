@@ -319,7 +319,7 @@ pub fn assert_is_valid_spl_token_mint(mint_info: &AccountInfo) -> Result<(), Pro
     }
 
     if mint_info.owner != &spl_token_2022::id() && mint_info.owner != &spl_token::id() {
-        return Err(GovernanceError::SplTokenAccountWithInvalidOwner.into());
+        return Err(GovernanceError::SplTokenMintWithInvalidOwner.into());
     }
 
     // length might be invalid for mints with extension types.
