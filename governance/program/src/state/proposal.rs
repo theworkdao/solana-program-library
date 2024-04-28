@@ -1333,8 +1333,7 @@ mod test {
         RealmV2 {
             account_type: GovernanceAccountType::RealmV2,
             community_mint: Pubkey::new_unique(),
-            is_token_2022: false,
-            reserved: [0; 5],
+            reserved: [0; 6],
 
             authority: Some(Pubkey::new_unique()),
             name: "test-realm".to_string(),

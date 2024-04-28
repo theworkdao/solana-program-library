@@ -13,7 +13,7 @@ use {
                 get_realm_config_address_seeds, resolve_governing_token_config, RealmConfigAccount,
             },
         },
-        tools::{spl_token::{create_spl_token_account_signed, is_spl_token_2022}, structs::Reserved110},
+        tools::{spl_token::create_spl_token_account_signed, structs::Reserved110},
     },
     solana_program::{
         account_info::{next_account_info, AccountInfo},
@@ -50,10 +50,9 @@ pub fn process_create_realm(
     }
 
     assert_valid_realm_config_args(&realm_config_args)?;
+
     // Check if spl_token or spl_token_2022
     check_spl_token_program_account(spl_token_info.key)?;
-
-    let is_token_2022 = is_spl_token_2022(spl_token_info.key);
 
     // Create Community token holding account
     create_spl_token_account_signed(
@@ -134,8 +133,7 @@ pub fn process_create_realm(
         community_mint: *governance_token_mint_info.key,
 
         name: name.clone(),
-        is_token_2022,
-        reserved: [0; 5],
+        reserved: [0; 6],
         authority: Some(*realm_authority_info.key),
         config: RealmConfig {
             council_mint: council_token_mint_address,

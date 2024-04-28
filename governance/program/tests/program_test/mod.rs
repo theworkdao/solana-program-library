@@ -357,8 +357,7 @@ impl GovernanceProgramTest {
             community_mint: community_token_mint_keypair.pubkey(),
 
             name,
-            is_token_2022: false,
-            reserved: [0; 5],
+            reserved: [0; 6],
             authority: Some(realm_authority.pubkey()),
             config: RealmConfig {
                 council_mint: council_token_mint_pubkey,
@@ -539,8 +538,7 @@ impl GovernanceProgramTest {
             community_mint: community_token_mint_keypair.pubkey(),
 
             name,
-            is_token_2022: true,
-            reserved: [0; 5],
+            reserved: [0; 6],
             authority: Some(realm_authority.pubkey()),
             config: RealmConfig {
                 council_mint: council_token_mint_pubkey,
@@ -646,8 +644,7 @@ impl GovernanceProgramTest {
             community_mint: realm_cookie.account.community_mint,
 
             name,
-            is_token_2022: false,
-            reserved: [0; 5],
+            reserved: [0; 6],
             authority: Some(realm_authority.pubkey()),
             config: RealmConfig {
                 council_mint: Some(council_mint),
@@ -736,8 +733,7 @@ impl GovernanceProgramTest {
             community_mint: realm_cookie.account.community_mint,
 
             name,
-            is_token_2022: true,
-            reserved: [0; 5],
+            reserved: [0; 6],
             authority: Some(realm_authority.pubkey()),
             config: RealmConfig {
                 council_mint: Some(council_mint),
