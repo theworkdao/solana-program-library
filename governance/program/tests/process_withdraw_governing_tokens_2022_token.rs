@@ -508,3 +508,49 @@ async fn test_withdraw_governing_tokens_with_token_owner_record_lock_error() {
     // Assert
     assert_eq!(err, GovernanceError::TokenOwnerRecordLocked.into());
 }
+
+
+#[tokio::test]
+async fn test_withdraw_community_2022_tokens_with_transfer_fees() {
+    // Arrange
+    let mut governance_test = GovernanceProgramTest::start_new().await;
+    let realm_cookie = governance_test.with_realm_token_2022_with_transfer_fees().await;
+
+    let token_owner_record_cookie = governance_test
+        .with_community_2022_token_deposit_with_transfer_fees(&realm_cookie)
+        .await
+        .unwrap();
+    
+    // Act
+    governance_test
+        .withdraw_community_2022_tokens(&realm_cookie, &token_owner_record_cookie)
+        .await
+        .unwrap();
+
+    // Assert
+    let token_owner_record = governance_test
+        .get_token_owner_record_account(&token_owner_record_cookie.address)
+        .await;
+
+    assert_eq!(0, token_owner_record.governing_token_deposit_amount);
+
+    let holding_account = governance_test
+        .get_token_account(&realm_cookie.community_token_holding_account)
+        .await;
+
+    assert_eq!(0, holding_account.amount);
+
+    let source_account = governance_test
+        .get_token_account(&token_owner_record_cookie.token_source)
+        .await;
+
+    // token is transfered twice, once for deposit and another for withdraw
+    // for ~100 the fee is 3  
+    let token_transfer_times = 2;
+    let transfer_fee = 3 * token_transfer_times;
+
+    assert_eq!(
+        token_owner_record_cookie.token_source_amount - transfer_fee,
+        source_account.amount
+    );
+}

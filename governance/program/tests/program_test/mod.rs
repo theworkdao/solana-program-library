@@ -212,6 +212,13 @@ impl GovernanceProgramTest {
     }
 
     #[allow(dead_code)]
+    pub async fn with_realm_token_2022_with_transfer_fees(&mut self) -> RealmCookie {
+        let realm_setup_args = RealmSetupArgs::default();
+        self.with_realm_using_args_token_2022_with_transfer_fees(&realm_setup_args)
+            .await
+    }
+
+    #[allow(dead_code)]
     pub async fn with_realm_using_addins(
         &mut self,
         plugin_setup_args: PluginSetupArgs,
@@ -608,6 +615,187 @@ impl GovernanceProgramTest {
     }
 
     #[allow(dead_code)]
+    pub async fn with_realm_using_args_token_2022_with_transfer_fees(
+        &mut self,
+        realm_setup_args: &RealmSetupArgs,
+    ) -> RealmCookie {
+        let name = format!("Realm #{}", self.next_realm_id).to_string();
+        self.next_realm_id += 1;
+
+        let realm_address = get_realm_address(&self.program_id, &name);
+
+        let community_token_mint_keypair = Keypair::new();
+        let community_token_mint_authority = Keypair::new();
+
+        let community_token_holding_address = get_governing_token_holding_address(
+            &self.program_id,
+            &realm_address,
+            &community_token_mint_keypair.pubkey(),
+        );
+
+        self.bench
+            .create_mint_2022_transfer_fee(
+                &community_token_mint_keypair,
+                &community_token_mint_authority.pubkey(),
+                None,
+            )
+            .await;
+
+        let (
+            council_token_mint_pubkey,
+            council_token_holding_address,
+            council_token_mint_authority,
+        ) = if realm_setup_args.use_council_mint {
+            let council_token_mint_keypair = Keypair::new();
+            let council_token_mint_authority = Keypair::new();
+
+            let council_token_holding_address = get_governing_token_holding_address(
+                &self.program_id,
+                &realm_address,
+                &council_token_mint_keypair.pubkey(),
+            );
+
+            self.bench
+                .create_mint_2022(
+                    &council_token_mint_keypair,
+                    &council_token_mint_authority.pubkey(),
+                    None,
+                )
+                .await;
+
+            (
+                Some(council_token_mint_keypair.pubkey()),
+                Some(council_token_holding_address),
+                Some(council_token_mint_authority),
+            )
+        } else {
+            (None, None, None)
+        };
+
+        let realm_authority = Keypair::new();
+
+        let community_token_args = GoverningTokenConfigAccountArgs {
+            voter_weight_addin: realm_setup_args
+                .community_token_config_args
+                .voter_weight_addin,
+            max_voter_weight_addin: realm_setup_args
+                .community_token_config_args
+                .max_voter_weight_addin,
+            token_type: realm_setup_args
+                .community_token_config_args
+                .token_type
+                .clone(),
+        };
+
+        let council_token_args = GoverningTokenConfigAccountArgs {
+            voter_weight_addin: realm_setup_args
+                .council_token_config_args
+                .voter_weight_addin,
+            max_voter_weight_addin: realm_setup_args
+                .council_token_config_args
+                .max_voter_weight_addin,
+            token_type: realm_setup_args
+                .council_token_config_args
+                .token_type
+                .clone(),
+        };
+
+        let create_realm_ix = create_realm(
+            &self.program_id,
+            &realm_authority.pubkey(),
+            &community_token_mint_keypair.pubkey(),
+            &self.bench.payer.pubkey(),
+            council_token_mint_pubkey,
+            Some(community_token_args),
+            Some(council_token_args),
+            name.clone(),
+            realm_setup_args.min_community_weight_to_create_governance,
+            realm_setup_args
+                .community_mint_max_voter_weight_source
+                .clone(),
+            true, // is_token_2022
+        );
+
+        self.bench
+            .process_transaction(&[create_realm_ix], None)
+            .await
+            .unwrap();
+
+        let account = RealmV2 {
+            account_type: GovernanceAccountType::RealmV2,
+            community_mint: community_token_mint_keypair.pubkey(),
+
+            name,
+            reserved: [0; 6],
+            authority: Some(realm_authority.pubkey()),
+            config: RealmConfig {
+                council_mint: council_token_mint_pubkey,
+                reserved: [0; 6],
+
+                min_community_weight_to_create_governance: realm_setup_args
+                    .min_community_weight_to_create_governance,
+                community_mint_max_voter_weight_source: realm_setup_args
+                    .community_mint_max_voter_weight_source
+                    .clone(),
+                legacy1: 0,
+                legacy2: 0,
+            },
+            legacy1: 0,
+            reserved_v2: [0; 128],
+        };
+
+        let realm_config_cookie = RealmConfigCookie {
+            address: get_realm_config_address(&self.program_id, &realm_address),
+            account: RealmConfigAccount {
+                account_type: GovernanceAccountType::RealmConfig,
+                realm: realm_address,
+                reserved: Reserved110::default(),
+                community_token_config: GoverningTokenConfig {
+                    voter_weight_addin: realm_setup_args
+                        .community_token_config_args
+                        .voter_weight_addin,
+                    max_voter_weight_addin: realm_setup_args
+                        .community_token_config_args
+                        .max_voter_weight_addin,
+                    token_type: realm_setup_args
+                        .community_token_config_args
+                        .token_type
+                        .clone(),
+                    reserved: [0; 4],
+                    lock_authorities: vec![],
+                },
+                council_token_config: GoverningTokenConfig {
+                    voter_weight_addin: realm_setup_args
+                        .council_token_config_args
+                        .voter_weight_addin,
+                    max_voter_weight_addin: realm_setup_args
+                        .council_token_config_args
+                        .max_voter_weight_addin,
+                    token_type: realm_setup_args
+                        .council_token_config_args
+                        .token_type
+                        .clone(),
+                    reserved: [0; 4],
+                    lock_authorities: vec![],
+                },
+            },
+        };
+
+        RealmCookie {
+            address: realm_address,
+            account,
+
+            community_mint_authority: community_token_mint_authority,
+            community_token_holding_account: community_token_holding_address,
+
+            council_token_holding_account: council_token_holding_address,
+            council_mint_authority: council_token_mint_authority,
+            realm_authority: Some(realm_authority),
+            realm_config: realm_config_cookie,
+        }
+    }
+
+    #[allow(dead_code)]
     pub async fn with_realm_using_mints(&mut self, realm_cookie: &RealmCookie) -> RealmCookie {
         let name = format!("Realm #{}", self.next_realm_id).to_string();
         self.next_realm_id += 1;
@@ -810,6 +998,23 @@ impl GovernanceProgramTest {
         realm_cookie: &RealmCookie,
     ) -> Result<TokenOwnerRecordCookie, ProgramError> {
         self.with_initial_governing_token_2022_deposit(
+            &realm_cookie.address,
+            &realm_cookie.account.community_mint,
+            &realm_cookie.community_mint_authority,
+            100,
+            None,
+        )
+        .await
+    }
+
+    // Creates TokenOwner which owns 100 community tokens and deposits them into the
+    // given Realm
+    #[allow(dead_code)]
+    pub async fn with_community_2022_token_deposit_with_transfer_fees(
+        &mut self,
+        realm_cookie: &RealmCookie,
+    ) -> Result<TokenOwnerRecordCookie, ProgramError> {
+        self.with_initial_governing_token_2022_deposit_with_transfer_fees(
             &realm_cookie.address,
             &realm_cookie.account.community_mint,
             &realm_cookie.community_mint_authority,
@@ -1278,6 +1483,89 @@ impl GovernanceProgramTest {
             max_voter_weight_record: None,
         })
     }
+
+
+    #[allow(dead_code)]
+    pub async fn with_initial_governing_token_2022_deposit_with_transfer_fees(
+        &mut self,
+        realm_address: &Pubkey,
+        governing_mint: &Pubkey,
+        governing_mint_authority: &Keypair,
+        amount: u64,
+        token_owner: Option<Keypair>,
+    ) -> Result<TokenOwnerRecordCookie, ProgramError> {
+        let token_owner = token_owner.unwrap_or_else(Keypair::new);
+        let token_source = Keypair::new();
+
+        let transfer_authority = Keypair::new();
+
+        self.bench
+            .create_token_2022_account_with_transfer_authority_with_transfer_fees(
+                &token_source,
+                governing_mint,
+                governing_mint_authority,
+                amount,
+                &token_owner,
+                &transfer_authority.pubkey(),
+            )
+            .await;
+
+        let deposit_governing_tokens_ix = deposit_governing_tokens(
+            &self.program_id,
+            realm_address,
+            &token_source.pubkey(),
+            &token_owner.pubkey(),
+            &token_owner.pubkey(),
+            &self.bench.payer.pubkey(),
+            amount,
+            governing_mint,
+            true // is_token_2022
+        );
+
+        self.bench
+            .process_transaction(&[deposit_governing_tokens_ix], Some(&[&token_owner]))
+            .await?;
+
+        let token_owner_record_address = get_token_owner_record_address(
+            &self.program_id,
+            realm_address,
+            governing_mint,
+            &token_owner.pubkey(),
+        );
+        // expected transfer_fee
+        let transfer_fee = 3;
+        let account = TokenOwnerRecordV2 {
+            account_type: GovernanceAccountType::TokenOwnerRecordV2,
+            realm: *realm_address,
+            governing_token_mint: *governing_mint,
+            governing_token_owner: token_owner.pubkey(),
+            governing_token_deposit_amount: amount - transfer_fee,
+            governance_delegate: None,
+            unrelinquished_votes_count: 0,
+            outstanding_proposal_count: 0,
+            version: TOKEN_OWNER_RECORD_LAYOUT_VERSION,
+            reserved: [0; 6],
+            reserved_v2: [0; 124],
+            locks: vec![],
+        };
+
+        let governance_delegate = Keypair::from_base58_string(&token_owner.to_base58_string());
+
+
+        Ok(TokenOwnerRecordCookie {
+            address: token_owner_record_address,
+            account,
+
+            token_source_amount: amount,
+            token_source: token_source.pubkey(),
+            token_owner,
+            governance_authority: None,
+            governance_delegate,
+            voter_weight_record: None,
+            max_voter_weight_record: None,
+        })
+    }
+
 
     #[allow(dead_code)]
     pub async fn with_initial_governing_token_deposit_using_mint(

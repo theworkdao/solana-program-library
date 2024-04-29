@@ -10,7 +10,7 @@ use {
                 get_token_owner_record_address_seeds, get_token_owner_record_data_for_seeds,
             },
         },
-        tools::spl_token::{get_spl_token_mint, transfer_spl_tokens_signed},
+        tools::spl_token::{get_spl_token_mint, transfer_spl_tokens_signed, transfer_spl_tokens_signed_checked},
     },
     solana_program::{
         account_info::{next_account_info, AccountInfo},
@@ -41,6 +41,12 @@ pub fn process_withdraw_governing_tokens(
         return Err(GovernanceError::GoverningTokenOwnerMustSign.into());
     }
 
+    let expected_mint_info = if let Ok(expected_mint_info) = next_account_info(account_info_iter) {
+        Some(expected_mint_info)
+    } else {
+        None
+    };
+
     let realm_data = get_realm_data(program_id, realm_info)?;
     let governing_token_mint = get_spl_token_mint(governing_token_holding_info)?;
 
@@ -70,16 +76,32 @@ pub fn process_withdraw_governing_tokens(
 
     token_owner_record_data.assert_can_withdraw_governing_tokens(clock.unix_timestamp)?;
 
-    transfer_spl_tokens_signed(
-        governing_token_holding_info,
-        governing_token_destination_info,
-        realm_info,
-        &get_realm_address_seeds(&realm_data.name),
-        program_id,
-        token_owner_record_data.governing_token_deposit_amount,
-        spl_token_info,
-    )?;
 
+    match expected_mint_info {
+        Some(mint_info) => {
+            transfer_spl_tokens_signed_checked(
+                governing_token_holding_info,
+                governing_token_destination_info,
+                realm_info,
+                &get_realm_address_seeds(&realm_data.name),
+                program_id,
+                token_owner_record_data.governing_token_deposit_amount,
+                spl_token_info,
+                mint_info
+            )?;
+        }
+        _ => {
+            transfer_spl_tokens_signed(
+                governing_token_holding_info,
+                governing_token_destination_info,
+                realm_info,
+                &get_realm_address_seeds(&realm_data.name),
+                program_id,
+                token_owner_record_data.governing_token_deposit_amount,
+                spl_token_info,
+            )?;
+        }
+    }
     token_owner_record_data.governing_token_deposit_amount = 0;
     token_owner_record_data.serialize(&mut token_owner_record_info.data.borrow_mut()[..])?;
 

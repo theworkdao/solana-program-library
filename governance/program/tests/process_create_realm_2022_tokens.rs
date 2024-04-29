@@ -107,3 +107,26 @@ async fn test_create_realm_token_2022_for_existing_pda() {
 
     assert_eq!(realm_cookie.account, realm_account);
 }
+
+
+#[tokio::test]
+async fn test_create_realm_with_token_2022_with_transfer_fees() {
+    // Arrange
+    let mut governance_test = GovernanceProgramTest::start_new().await;
+
+    let realm_setup_args = RealmSetupArgs {
+        use_council_mint: true,
+        community_mint_max_voter_weight_source: MintMaxVoterWeightSource::SupplyFraction(1),
+        min_community_weight_to_create_governance: 1,
+        ..Default::default()
+    };
+    // Act
+    let realm_cookie = governance_test.with_realm_using_args_token_2022_with_transfer_fees(&realm_setup_args).await;
+
+    // Assert
+    let realm_account = governance_test
+        .get_realm_account(&realm_cookie.address)
+        .await;
+
+    assert_eq!(realm_cookie.account, realm_account);
+}

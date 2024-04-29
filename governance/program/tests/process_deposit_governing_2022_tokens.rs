@@ -86,7 +86,6 @@ async fn test_deposit_initial_council_2022_tokens() {
 
     assert_eq!(token_owner_record_cookie.account, token_owner_record);
 
-
     let source_account = governance_test
         .get_token_account(&token_owner_record_cookie.token_source)
         .await;
@@ -367,3 +366,54 @@ async fn test_deposit_comunity_2022_tokens_with_cannot_deposit_dormant_tokens_er
     // Assert
     assert_eq!(err, GovernanceError::CannotDepositDormantTokens.into());
 }
+
+#[tokio::test]
+async fn test_deposit_initial_community_2022_tokens_with_transfer_fees() {
+    // Arrange
+    let mut governance_test = GovernanceProgramTest::start_new().await;
+    let realm_cookie = governance_test.with_realm_token_2022_with_transfer_fees().await;
+
+    // Act
+    let token_owner_record_cookie = governance_test
+        .with_community_2022_token_deposit_with_transfer_fees(&realm_cookie)
+        .await
+        .unwrap();
+
+    // Assert
+
+    let token_owner_record = governance_test
+        .get_token_owner_record_account(&token_owner_record_cookie.address)
+        .await;
+
+    assert_eq!(token_owner_record_cookie.account, token_owner_record);
+
+    assert_eq!(
+        TOKEN_OWNER_RECORD_LAYOUT_VERSION,
+        token_owner_record.version
+    );
+    assert_eq!(0, token_owner_record.unrelinquished_votes_count);
+
+    // expected transfer_fee
+    let transfer_fee = 3;
+    let source_account = governance_test
+        .get_token_account(&token_owner_record_cookie.token_source)
+        .await;
+
+    assert_eq!(
+        token_owner_record_cookie.token_source_amount
+            - token_owner_record_cookie
+                .account
+                .governing_token_deposit_amount - transfer_fee,
+        source_account.amount
+    );
+
+    let holding_account = governance_test
+        .get_token_account(&realm_cookie.community_token_holding_account)
+        .await;
+
+    assert_eq!(
+        token_owner_record.governing_token_deposit_amount,
+        holding_account.amount
+    );
+}
+

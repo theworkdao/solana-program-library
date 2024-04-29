@@ -1,29 +1,21 @@
 #![allow(clippy::arithmetic_side_effects)]
 use {
-    crate::tools::map_transaction_error,
-    bincode::deserialize,
-    borsh::{BorshDeserialize, BorshSerialize},
-    cookies::{TokenAccountCookie, WalletCookie},
-    solana_program::{
+    crate::tools::map_transaction_error, bincode::deserialize, borsh::{BorshDeserialize, BorshSerialize}, cookies::{TokenAccountCookie, WalletCookie}, solana_program::{
         borsh1::try_from_slice_unchecked, clock::Clock, instruction::Instruction,
         program_error::ProgramError, program_pack::Pack, pubkey::Pubkey, rent::Rent,
         stake_history::Epoch, system_instruction, system_program, sysvar,
-    },
-    solana_program_test::{ProgramTest, ProgramTestContext},
-    solana_sdk::{
+    }, solana_program_test::{ProgramTest, ProgramTestContext}, solana_sdk::{
         account::{Account, AccountSharedData, WritableAccount},
         signature::Keypair,
         signer::Signer,
         transaction::Transaction,
-    },
-    spl_token::instruction::{set_authority, AuthorityType},
-    std::borrow::Borrow,
-    tools::clone_keypair,
+    }, spl_token::instruction::{set_authority, AuthorityType}, spl_token_2022::{extension::ExtensionType, state::Mint}, spl_token_client::token::ExtensionInitializationParams, std::borrow::Borrow, token2022::{test_transfer_fee_config_with_keypairs, TransferFeeConfigWithKeypairs}, tools::clone_keypair
 };
 
 pub mod addins;
 pub mod cookies;
 pub mod tools;
+pub mod token2022;
 
 /// Program's test bench which captures test context, rent and payer and common
 /// utility functions
@@ -180,6 +172,63 @@ impl ProgramTestBench {
             .unwrap();
     }
 
+    pub async fn create_mint_2022_transfer_fee(
+        &mut self,
+        mint_keypair: &Keypair,
+        mint_authority: &Pubkey,
+        freeze_authority: Option<&Pubkey>,
+    ) {
+        let TransferFeeConfigWithKeypairs {
+            transfer_fee_config_authority,
+            withdraw_withheld_authority,
+            transfer_fee_config,
+            ..
+        } = test_transfer_fee_config_with_keypairs();
+        let transfer_fee_basis_points = u16::from(
+            transfer_fee_config
+                .newer_transfer_fee
+                .transfer_fee_basis_points,
+        );
+        let maximum_fee = u64::from(transfer_fee_config.newer_transfer_fee.maximum_fee);
+        let extension_initialization_params = vec![ExtensionInitializationParams::TransferFeeConfig {
+            transfer_fee_config_authority: transfer_fee_config_authority.pubkey().into(),
+            withdraw_withheld_authority: withdraw_withheld_authority.pubkey().into(),
+            transfer_fee_basis_points,
+            maximum_fee,
+        }];
+        let extension_types = extension_initialization_params
+            .iter()
+            .map(|e| e.extension())
+            .collect::<Vec<_>>();
+        let space = ExtensionType::try_calculate_account_len::<Mint>(&extension_types).unwrap();
+        let mint_rent = self.rent.minimum_balance(space);
+
+        let mut instructions = vec![system_instruction::create_account(
+            &self.context.payer.pubkey(),
+            &mint_keypair.pubkey(),
+            mint_rent,
+            space as u64,
+            &spl_token_2022::id(),
+        )];
+
+        for params in extension_initialization_params {
+            instructions.push(params.instruction(&spl_token_2022::id(), &mint_keypair.pubkey()).unwrap());
+        }
+        instructions.push(
+            spl_token_2022::instruction::initialize_mint(
+                &spl_token_2022::id(),
+                &mint_keypair.pubkey(),
+                mint_authority,
+                freeze_authority,
+                0,
+            )
+            .unwrap(),
+        );
+        self.process_transaction(&instructions, Some(&[mint_keypair]))
+            .await
+            .unwrap();
+    }
+
     /// Sets spl-token program account (Mint or TokenAccount) authority
     pub async fn set_spl_token_account_authority(
         &mut self,
@@ -258,7 +307,6 @@ impl ProgramTestBench {
         .unwrap();
     }
 
-
     #[allow(dead_code)]
     pub async fn create_empty_token_2022_account(
         &mut self,
@@ -271,7 +319,7 @@ impl ProgramTestBench {
             &token_account_keypair.pubkey(),
             self.rent
                 .minimum_balance(spl_token_2022::state::Account::get_packed_len()),
-                spl_token_2022::state::Account::get_packed_len() as u64,
+            spl_token_2022::state::Account::get_packed_len() as u64,
             &spl_token_2022::id(),
         );
 
@@ -455,7 +503,6 @@ impl ProgramTestBench {
         .unwrap();
     }
 
-
     #[allow(dead_code)]
     pub async fn create_token_2022_account_with_transfer_authority(
         &mut self,
@@ -471,7 +518,7 @@ impl ProgramTestBench {
             &token_account_keypair.pubkey(),
             self.rent
                 .minimum_balance(spl_token_2022::state::Account::get_packed_len()),
-                spl_token_2022::state::Account::get_packed_len() as u64,
+            spl_token_2022::state::Account::get_packed_len() as u64,
             &spl_token_2022::id(),
         );
 
@@ -516,6 +563,68 @@ impl ProgramTestBench {
         .unwrap();
     }
 
+    #[allow(dead_code)]
+    pub async fn create_token_2022_account_with_transfer_authority_with_transfer_fees(
+        &mut self,
+        token_account_keypair: &Keypair,
+        token_mint: &Pubkey,
+        token_mint_authority: &Keypair,
+        amount: u64,
+        owner: &Keypair,
+        transfer_authority: &Pubkey,
+    ) {
+        let space = ExtensionType::try_calculate_account_len::<Mint>(&[spl_token_2022::extension::ExtensionType::TransferFeeConfig]).unwrap();
+        let mint_rent = self.rent.minimum_balance(space);
+        
+        let create_account_instruction = system_instruction::create_account(
+            &self.context.payer.pubkey(),
+            &token_account_keypair.pubkey(),
+            mint_rent,
+            space as u64,
+            &spl_token_2022::id(),
+        );
+
+        let initialize_account_instruction = spl_token_2022::instruction::initialize_account(
+            &spl_token_2022::id(),
+            &token_account_keypair.pubkey(),
+            token_mint,
+            &owner.pubkey(),
+        )
+        .unwrap();
+
+        let mint_instruction = spl_token_2022::instruction::mint_to(
+            &spl_token_2022::id(),
+            token_mint,
+            &token_account_keypair.pubkey(),
+            &token_mint_authority.pubkey(),
+            &[],
+            amount,
+        )
+        .unwrap();
+
+        let approve_instruction = spl_token_2022::instruction::approve(
+            &spl_token_2022::id(),
+            &token_account_keypair.pubkey(),
+            transfer_authority,
+            &owner.pubkey(),
+            &[],
+            amount,
+        )
+        .unwrap();
+
+        self.process_transaction(
+            &[
+                create_account_instruction,
+                initialize_account_instruction,
+                mint_instruction,
+                approve_instruction,
+            ],
+            Some(&[token_account_keypair, token_mint_authority, owner]),
+        )
+        .await
+        .unwrap();
+    }
+    
     #[allow(dead_code)]
     pub async fn get_clock(&mut self) -> Clock {
         self.get_bincode_account::<Clock>(&sysvar::clock::id())

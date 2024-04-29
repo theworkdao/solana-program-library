@@ -724,7 +724,7 @@ pub fn deposit_governing_tokens(
 
     let realm_config_address = get_realm_config_address(program_id, realm);
 
-    let accounts = vec![
+    let mut accounts = vec![
         AccountMeta::new_readonly(*realm, false),
         AccountMeta::new(governing_token_holding_address, false),
         AccountMeta::new(*governing_token_source, false),
@@ -743,6 +743,11 @@ pub fn deposit_governing_tokens(
         ),
         AccountMeta::new_readonly(realm_config_address, false),
     ];
+
+    // uses transfer_checked()
+    if is_token_2022 {
+        accounts.push(AccountMeta::new(*governing_token_mint, false));
+    };
 
     let instruction = GovernanceInstruction::DepositGoverningTokens { amount };
 
@@ -776,7 +781,7 @@ pub fn withdraw_governing_tokens(
 
     let realm_config_address = get_realm_config_address(program_id, realm);
 
-    let accounts = vec![
+    let mut accounts = vec![
         AccountMeta::new_readonly(*realm, false),
         AccountMeta::new(governing_token_holding_address, false),
         AccountMeta::new(*governing_token_destination, false),
@@ -792,6 +797,11 @@ pub fn withdraw_governing_tokens(
         ),
         AccountMeta::new_readonly(realm_config_address, false),
     ];
+
+    // uses transfer_checked()
+    if is_token_2022 {
+        accounts.push(AccountMeta::new(*governing_token_mint, false));
+    };
 
     let instruction = GovernanceInstruction::WithdrawGoverningTokens {};
 
