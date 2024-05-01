@@ -7,7 +7,10 @@ mod program_test;
 use {
     crate::program_test::args::*,
     program_test::*,
-    solana_sdk::signature::{Keypair, Signer},
+    solana_sdk::{
+        pubkey::Pubkey,
+        signature::{Keypair, Signer},
+    },
     spl_governance::{
         error::GovernanceError,
         instruction::deposit_governing_tokens,
@@ -233,7 +236,7 @@ async fn test_deposit_initial_community_2022_tokens_with_owner_must_sign_error()
         &governance_test.bench.context.payer.pubkey(),
         amount,
         &realm_cookie.account.community_mint,
-        true // is_token_2022
+        true, // is_token_2022
     );
 
     deposit_ix.accounts[3] = AccountMeta::new_readonly(token_owner.pubkey(), false);
@@ -283,7 +286,7 @@ async fn test_deposit_community_2022_tokens_with_malicious_holding_account_error
         &governance_test.bench.context.payer.pubkey(),
         amount,
         &realm_cookie.account.community_mint,
-        true // is_token_2022
+        true, // is_token_2022
     );
 
     // Try to maliciously deposit to the source
@@ -371,7 +374,9 @@ async fn test_deposit_comunity_2022_tokens_with_cannot_deposit_dormant_tokens_er
 async fn test_deposit_initial_community_2022_tokens_with_transfer_fees() {
     // Arrange
     let mut governance_test = GovernanceProgramTest::start_new().await;
-    let realm_cookie = governance_test.with_realm_token_2022_with_transfer_fees().await;
+    let realm_cookie = governance_test
+        .with_realm_token_2022_with_transfer_fees()
+        .await;
 
     // Act
     let token_owner_record_cookie = governance_test
@@ -403,7 +408,8 @@ async fn test_deposit_initial_community_2022_tokens_with_transfer_fees() {
         token_owner_record_cookie.token_source_amount
             - token_owner_record_cookie
                 .account
-                .governing_token_deposit_amount - transfer_fee,
+                .governing_token_deposit_amount
+            - transfer_fee,
         source_account.amount
     );
 
@@ -417,3 +423,59 @@ async fn test_deposit_initial_community_2022_tokens_with_transfer_fees() {
     );
 }
 
+#[tokio::test]
+async fn test_deposit_initial_community_2022_tokens_with_transfer_hook() {
+    let transfer_hook_program_id = Pubkey::new_unique();
+    // Arrange
+    let mut governance_test =
+        GovernanceProgramTest::start_with_transfer_hook(Some(&transfer_hook_program_id)).await;
+    let realm_cookie = governance_test
+        .with_realm_token_2022_with_transfer_hook(&transfer_hook_program_id)
+        .await;
+    let writable_pubkey = Pubkey::new_unique();
+
+    // Act
+    let token_owner_record_cookie = governance_test
+        .with_community_2022_token_deposit_with_transfer_hook(
+            &realm_cookie,
+            &transfer_hook_program_id,
+            &writable_pubkey,
+        )
+        .await
+        .unwrap();
+
+    // Assert
+
+    let token_owner_record = governance_test
+        .get_token_owner_record_account(&token_owner_record_cookie.address)
+        .await;
+
+    assert_eq!(token_owner_record_cookie.account, token_owner_record);
+
+    assert_eq!(
+        TOKEN_OWNER_RECORD_LAYOUT_VERSION,
+        token_owner_record.version
+    );
+    assert_eq!(0, token_owner_record.unrelinquished_votes_count);
+
+    let source_account = governance_test
+        .get_token_account(&token_owner_record_cookie.token_source)
+        .await;
+
+    assert_eq!(
+        token_owner_record_cookie.token_source_amount
+            - token_owner_record_cookie
+                .account
+                .governing_token_deposit_amount,
+        source_account.amount
+    );
+
+    let holding_account = governance_test
+        .get_token_account(&realm_cookie.community_token_holding_account)
+        .await;
+
+    assert_eq!(
+        token_owner_record.governing_token_deposit_amount,
+        holding_account.amount
+    );
+}

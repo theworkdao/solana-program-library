@@ -79,6 +79,7 @@ pub fn process_withdraw_governing_tokens(
 
     match expected_mint_info {
         Some(mint_info) => {
+            let additional_accounts = account_info_iter.as_slice();
             transfer_spl_tokens_signed_checked(
                 governing_token_holding_info,
                 governing_token_destination_info,
@@ -87,7 +88,8 @@ pub fn process_withdraw_governing_tokens(
                 program_id,
                 token_owner_record_data.governing_token_deposit_amount,
                 spl_token_info,
-                mint_info
+                mint_info,
+                additional_accounts
             )?;
         }
         _ => {

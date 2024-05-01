@@ -307,7 +307,7 @@ async fn test_withdraw_tokens_with_malicious_holding_account_error() {
         &token_owner_record_cookie.token_source,
         &token_owner_record_cookie.token_owner.pubkey(),
         &realm_cookie.account.community_mint,
-        false // is_token_2022
+        true // is_token_2022
     );
 
     withdraw_ix.accounts[1].pubkey = realm_token_account_cookie.address;
@@ -551,6 +551,52 @@ async fn test_withdraw_community_2022_tokens_with_transfer_fees() {
 
     assert_eq!(
         token_owner_record_cookie.token_source_amount - transfer_fee,
+        source_account.amount
+    );
+}
+
+#[tokio::test]
+async fn test_withdraw_community_2022_tokens_with_transfer_hook() {
+    let transfer_hook_program_id = Pubkey::new_unique();
+
+    // spl_transfer_hook_example was used below.
+    // the extra meta accounts has to match what spl_transfer_hook_example used.
+    // with the only difference is that in here the mint_authority does not sign the transactions.
+    // Arrange
+    let mut governance_test = GovernanceProgramTest::start_with_transfer_hook(Some(&transfer_hook_program_id)).await;
+    let realm_cookie = governance_test.with_realm_token_2022_with_transfer_hook(&transfer_hook_program_id).await;
+    let writable_pubkey = Pubkey::new_unique();
+
+    // Act
+    let token_owner_record_cookie = governance_test
+        .with_community_2022_token_deposit_with_transfer_hook(&realm_cookie, &transfer_hook_program_id, &writable_pubkey)
+        .await
+        .unwrap();
+    // Act
+    governance_test
+        .withdraw_community_2022_tokens_with_transfer_hook(&realm_cookie, &token_owner_record_cookie, &transfer_hook_program_id)
+        .await
+        .unwrap();
+
+    // Assert
+    let token_owner_record = governance_test
+        .get_token_owner_record_account(&token_owner_record_cookie.address)
+        .await;
+
+    assert_eq!(0, token_owner_record.governing_token_deposit_amount);
+
+    let holding_account = governance_test
+        .get_token_account(&realm_cookie.community_token_holding_account)
+        .await;
+
+    assert_eq!(0, holding_account.amount);
+
+    let source_account = governance_test
+        .get_token_account(&token_owner_record_cookie.token_source)
+        .await;
+
+    assert_eq!(
+        token_owner_record_cookie.token_source_amount,
         source_account.amount
     );
 }

@@ -1806,3 +1806,101 @@ pub fn set_realm_config_item(
         data: borsh::to_vec(&instruction).unwrap(),
     }
 }
+
+
+/// Creates DepositGoverningTokens with extra account metas instruction for token extensions
+#[allow(clippy::too_many_arguments)]
+pub fn deposit_governing_tokens_with_extra_account_metas(
+    program_id: &Pubkey,
+    // Accounts
+    realm: &Pubkey,
+    governing_token_source: &Pubkey,
+    governing_token_owner: &Pubkey,
+    governing_token_source_authority: &Pubkey,
+    payer: &Pubkey,
+    // Args
+    amount: u64,
+    governing_token_mint: &Pubkey,
+    extra_account_metas: Vec<AccountMeta>
+) -> Instruction {
+    let token_owner_record_address = get_token_owner_record_address(
+        program_id,
+        realm,
+        governing_token_mint,
+        governing_token_owner,
+    );
+
+    let governing_token_holding_address =
+        get_governing_token_holding_address(program_id, realm, governing_token_mint);
+
+    let realm_config_address = get_realm_config_address(program_id, realm);
+
+    let mut accounts = vec![
+        AccountMeta::new_readonly(*realm, false),
+        AccountMeta::new(governing_token_holding_address, false),
+        AccountMeta::new(*governing_token_source, false),
+        AccountMeta::new_readonly(*governing_token_owner, true),
+        AccountMeta::new_readonly(*governing_token_source_authority, true),
+        AccountMeta::new(token_owner_record_address, false),
+        AccountMeta::new(*payer, true),
+        AccountMeta::new_readonly(system_program::id(), false),
+        AccountMeta::new_readonly(spl_token_2022::id(), false,),
+        AccountMeta::new_readonly(realm_config_address, false),
+        AccountMeta::new(*governing_token_mint, false)
+    ];
+
+    accounts.extend(extra_account_metas);
+
+    let instruction = GovernanceInstruction::DepositGoverningTokens { amount };
+
+    Instruction {
+        program_id: *program_id,
+        accounts,
+        data: borsh::to_vec(&instruction).unwrap(),
+    }
+}
+
+/// Creates WithdrawGoverningTokens with extra account metas instruction for token extensions
+pub fn withdraw_governing_tokens_with_extra_account_metas(
+    program_id: &Pubkey,
+    // Accounts
+    realm: &Pubkey,
+    governing_token_destination: &Pubkey,
+    governing_token_owner: &Pubkey,
+    // Args
+    governing_token_mint: &Pubkey,
+    extra_account_metas: Vec<AccountMeta>
+) -> Instruction {
+    let token_owner_record_address = get_token_owner_record_address(
+        program_id,
+        realm,
+        governing_token_mint,
+        governing_token_owner,
+    );
+
+    let governing_token_holding_address =
+        get_governing_token_holding_address(program_id, realm, governing_token_mint);
+
+    let realm_config_address = get_realm_config_address(program_id, realm);
+
+    let mut accounts = vec![
+        AccountMeta::new_readonly(*realm, false),
+        AccountMeta::new(governing_token_holding_address, false),
+        AccountMeta::new(*governing_token_destination, false),
+        AccountMeta::new_readonly(*governing_token_owner, true),
+        AccountMeta::new(token_owner_record_address, false),
+        AccountMeta::new_readonly(spl_token_2022::id(), false,),
+        AccountMeta::new_readonly(realm_config_address, false),
+        AccountMeta::new(*governing_token_mint, false)
+    ];
+    
+    accounts.extend(extra_account_metas);
+
+    let instruction = GovernanceInstruction::WithdrawGoverningTokens {};
+
+    Instruction {
+        program_id: *program_id,
+        accounts,
+        data: borsh::to_vec(&instruction).unwrap(),
+    }
+}

@@ -72,13 +72,15 @@ pub fn process_deposit_governing_tokens(
         // If the source is spl-token token account then transfer tokens from it
         match expected_mint_info {
             Some(mint_info) => {
+                let additional_accounts = account_info_iter.as_slice();
                 transfer_checked_spl_tokens(
                     governing_token_source_info,
                     governing_token_holding_info,
                     governing_token_source_authority_info,
                     amount,
                     spl_token_info,
-                    mint_info
+                    mint_info,
+                    additional_accounts
                 )?;
             }
             _ => {

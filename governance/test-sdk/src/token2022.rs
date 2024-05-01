@@ -1,6 +1,8 @@
 use {
-    solana_sdk::signature::Signer,
-    solana_sdk::{program_option::COption, signature::Keypair},
+    solana_sdk::{
+        program_option::COption,
+        signature::{Keypair, Signer},
+    },
     spl_token_2022::extension::transfer_fee::{TransferFee, TransferFeeConfig},
 };
 
