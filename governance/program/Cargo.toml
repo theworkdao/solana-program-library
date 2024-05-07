@@ -23,6 +23,13 @@ solana-program = ">=1.18.2,<=2"
 spl-token = { version = "4.0", path = "../../token/program", features = [
   "no-entrypoint",
 ] }
+spl-token-2022 = { version = "3.0.2", path = "../../token/program-2022", features = [
+  "no-entrypoint",
+] }
+spl-transfer-hook-interface = { version = "0.6.3", path = "../../token/transfer-hook/interface" }
+spl-transfer-hook-example = { version = "0.6", path = "../../token/transfer-hook/example", features = [
+  "no-entrypoint",
+] }
 spl-governance-tools = { version = "0.1.4", path = "../tools" }
 spl-governance-addin-api = { version = "0.1.4", path = "../addin-api" }
 thiserror = "1.0"

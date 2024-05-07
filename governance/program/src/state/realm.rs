@@ -159,7 +159,7 @@ pub struct RealmV2 {
 
     /// Configuration of the Realm
     pub config: RealmConfig,
-
+    
     /// Reserved space for future versions
     pub reserved: [u8; 6],
 

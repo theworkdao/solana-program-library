@@ -22,7 +22,7 @@ use {
         rent::Rent,
         sysvar::Sysvar,
     },
-    spl_governance_tools::account::create_and_serialize_account_signed,
+    spl_governance_tools::account::create_and_serialize_account_signed, spl_token_2022::check_spl_token_program_account,
 };
 
 /// Processes CreateRealm instruction
@@ -50,6 +50,9 @@ pub fn process_create_realm(
     }
 
     assert_valid_realm_config_args(&realm_config_args)?;
+
+    // Check if spl_token or spl_token_2022
+    check_spl_token_program_account(spl_token_info.key)?;
 
     // Create Community token holding account
     create_spl_token_account_signed(
